@@ -139,6 +139,14 @@ class Net(nn.Module):
 
         # ------------ Local convolutions ------------
 
+        print(k2v.shape, k2h.shape)
+
+        print("left black bar position", i2[0,:,25 + 105,25 + 160], "k1v", k1v[0, :, 25 + 105,25 + 160], "k1h", k1h[0, :, 25 + 105, 25 + 160])
+        
+        print("center new black bar", i2[0,:,25 + 105,25 + 175], "k1v", k1v[0,:,25+105, 25+175], "k1h", k1h[0,:,25+105,25+175])
+
+        print("right black bar position", i2[0,:,25 + 105,25 + 190], "k1v", k1v[0,:, 25 + 105, 25 + 190], "k1h", k1h[0, :, 25 + 105, 25 + 190])
+
         return self.separable_conv(padded_i2, k2v, k2h) + self.separable_conv(padded_i1, k1v, k1h)
 
     @staticmethod

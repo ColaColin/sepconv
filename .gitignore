@@ -113,3 +113,6 @@ ENV/
 
 .vscode
 libs/sepconv/src/SeparableConvolution_kernel.o
+
+# directory in which I work on new datasets, too big for git
+video
