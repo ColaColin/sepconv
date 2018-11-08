@@ -286,7 +286,7 @@ def _extract_patches_worker(tuples, max_per_frame=1, trials_per_tuple=100, flow_
                 "avg_flow": avg_flow
             })
 
-        sorted(selected_patches, key=lambda x: x['avg_flow'], reverse=True)
+        selected_patches = sorted(selected_patches, key=lambda x: x['avg_flow'], reverse=True)
         all_patches += selected_patches[:max_per_frame]
         # print("===> Tuple {}/{} ready.".format(tup_index+1, n_tuples))
 
@@ -429,7 +429,7 @@ def prepare_dataset(dataset_dir=None, force_rebuild=False):
         trials_per_tuple=30,
         flow_threshold=25.0,
         jumpcut_threshold=8e-3,
-        workers=2
+        workers=workers
     )
 
     # shuffle patches before writing to file
