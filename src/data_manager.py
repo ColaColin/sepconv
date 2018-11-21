@@ -10,7 +10,9 @@ import cv2 as cv
 from joblib import Parallel, delayed
 from timeit import default_timer as timer
 from torchvision.transforms.functional import crop as crop_image
-from os.path import exists, join, basename, isdir
+from torchvision.transforms.functional import rotate as rotate_image
+import torchvision.transforms.functional
+from os.path import exists, join, basename, isdir, splitext
 from os import makedirs, remove, listdir, rmdir, rename
 from six.moves import urllib
 from PIL import Image
@@ -61,18 +63,41 @@ def load_tuples(root_path, stride, tuple_size, paths_only=True):
 
     return tuples
 
-
 def load_patch(patch):
     """
     Reads the three images of a patch from disk and returns them already cropped.
     :param patch: Dictionary containing the details of the patch
     :return: Tuple of PIL.Image objects corresponding to the patch
     """
+
     paths = (patch['left_frame'], patch['middle_frame'], patch['right_frame'])
     i, j = (patch['patch_i'], patch['patch_j'])
-    imgs = [load_img(x) for x in paths]
     h, w = config.PATCH_SIZE
-    return tuple(crop_image(x, i, j, h, w) for x in imgs)
+    imgs = [load_img(x) for x in paths]
+
+    if not patch['custom']:
+        return tuple(crop_image(x, i, j, h, w) for x in imgs)
+    else:
+        diag = patch['patch_diagonal']
+        angle = patch['rotation']
+        # first crop out the region to be rotated
+        cropped = [crop_image(x, i, j, diag, diag) for x in imgs]
+
+        mx = diag // 2
+        my = diag // 2
+
+        half_w = w // 2
+        half_h = h // 2
+
+        top = my - half_h
+        left = mx - half_w
+
+        # then rotate
+        rotated = [rotate_image(x, angle, resample=Image.BICUBIC) for x in cropped]
+        final_crop = [crop_image(x, top, left, h, w) for x in rotated]
+
+        # at last crop out the center pixels that make up the finished patch
+        return tuple(final_crop)
 
 
 def load_cached_patch(cached_patch):
@@ -164,6 +189,32 @@ def tuples_from_davis(davis_dir, res='480p'):
         for i in range(len(frame_paths) // 3):
             x1, t, x2 = frame_paths[i * 3], frame_paths[i * 3 + 1], frame_paths[i * 3 + 2]
             tuples.append((x1, t, x2))
+
+    return tuples
+
+def tuples_from_custom(custom_dir):
+    tuples = []
+
+    for f in listdir(custom_dir):
+        if isdir(join(custom_dir, f)) and not f == "cache" and not f == "tmp":
+            image_files = listdir(join(custom_dir, f))
+            image_files = [x for x in image_files if is_image(join(custom_dir, f, x))]
+            # don't want to trust whatever sorting listdir comes up with. Files are named as frame numbers and should be sorted as such
+            image_files = sorted(image_files, key=lambda x: int(splitext(x)[0]))
+            
+            frame_paths = [join(custom_dir, f, x) for x in image_files]
+
+            stride = 2 # number of frames between frames packed togather as tuples
+            frameskip = 10 # number of frames skipped after a set of frames used for a tuple
+
+            i = 0
+            while i + 2*stride < len(frame_paths):
+                x1, t, x2 = frame_paths[i], frame_paths[i + 1 * stride], frame_paths[i + 2*stride]
+                tuples.append((x1, t, x2))
+                i += 2 * stride
+                i += frameskip
+
+    print(f"Will consider {len(tuples)} custom tuples")
 
     return tuples
 
@@ -283,7 +334,8 @@ def _extract_patches_worker(tuples, max_per_frame=1, trials_per_tuple=100, flow_
                 "right_frame": tup[2],
                 "patch_i": i,
                 "patch_j": j,
-                "avg_flow": avg_flow
+                "avg_flow": avg_flow,
+                "custom": False
             })
 
         selected_patches = sorted(selected_patches, key=lambda x: x['avg_flow'], reverse=True)
@@ -296,6 +348,164 @@ def _extract_patches_worker(tuples, max_per_frame=1, trials_per_tuple=100, flow_
 
     return all_patches
 
+def vector_direction_deg(x, y):
+    """
+    direction of a vector in degrees in range [0, 360)
+    """
+    return (np.arctan2(x, y) * (180 / np.pi) + 180) % 360
+
+def angle_difference(a1, a2):
+    """
+    return the difference in angle between two angles in range [0, 180]
+    """
+    abs_diff = abs(a1 - a2)
+    return min(abs_diff, 360 - abs_diff)
+
+def is_single_direction(flow, check_vectors_magnitude_ratio = 0.8, check_vectors_max_angle_difference=8, check_vectors_max_error_ratio=0.1):
+    """
+    return a tuple (True|False, avg_direction)
+    """
+
+    avg_direction = flow.sum(axis=(0,1))
+    avg_direction /= np.linalg.norm(avg_direction)
+
+    # create array of non-zero flow vectors
+    flow_vecs = []
+    for y in range(flow.shape[0]):
+        for x in range(flow.shape[1]):
+            vec = flow[y,x]
+            # do not consider very small flow vectors
+            if np.linalg.norm(flow[y,x] > 0.5):
+                flow_vecs.append(flow[y, x])
+
+    # too little movement in the patch
+    if len(flow_vecs) < 100:
+        return (False, avg_direction)
+
+    avg_direction_angle = vector_direction_deg(avg_direction[0], avg_direction[1])
+
+    #map into angle, magnitude pairs
+    flow_vecs = list(map(lambda x: (vector_direction_deg(x[0], x[1]), np.linalg.norm(x)), flow_vecs))
+
+    #sort the array by vector magnitudes
+    flow_vecs = sorted(flow_vecs, key=lambda x: x[1], reverse=True)
+
+    # find the sum of all magnitudes
+    sum_magnitudes = 0
+    for v in flow_vecs:
+        sum_magnitudes += v[1]
+
+    #check the vectors for an angle conforming with the avg direction by at most the required difference
+    processed_magnitude = 0
+    checked_vecs = 0
+    num_check_fails = 0
+    for v in flow_vecs:
+        checked_vecs += 1
+        processed_magnitude += v[1]
+        if processed_magnitude > check_vectors_magnitude_ratio * sum_magnitudes:
+            break
+
+        diff = angle_difference(v[0], avg_direction_angle)
+        if diff > check_vectors_max_angle_difference:
+            num_check_fails += 1
+    
+    fail_ratio = num_check_fails / float(checked_vecs)
+
+    return (fail_ratio < check_vectors_max_error_ratio, avg_direction)
+
+def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, force_horizontal):
+    patch_h, patch_w = config.PATCH_SIZE
+
+    assert(patch_h == patch_w)
+
+    patch_diagonal = int(((patch_w ** 2 + patch_h ** 2) ** 0.5)+1)
+
+    pil_to_numpy = lambda x: np.array(x)[:, :, ::-1]
+
+    patches = []
+
+    jumpcuts = 0
+    flowfiltered = 0
+    directionfiltered = 0
+    total_count = 0
+
+    for tup_index in range(len(tuples)):
+        tup = tuples[tup_index]
+
+        left, middle, right = (load_img(x) for x in tup)
+
+        img_w, img_h = left.size
+
+        left = pil_to_numpy(left)
+        middle = pil_to_numpy(middle)
+        right = pil_to_numpy(right)
+
+        patch_num_w = int(img_w / patch_diagonal)
+        patch_num_h = int(img_h / patch_diagonal)
+
+        right_space = (img_w - patch_num_w * patch_diagonal) // 2
+        top_space = (img_h - patch_num_h * patch_diagonal) // 2
+
+        for pw in range(patch_num_w):
+            for ph in range(patch_num_h):
+                total_count += 1
+
+                i = top_space + ph * patch_diagonal
+                j = right_space + pw * patch_diagonal
+
+                img1_patch = left[i:i+patch_diagonal, j:j + patch_diagonal]
+                t_patch = middle[i:i+patch_diagonal, j:j + patch_diagonal]
+                img2_patch = right[i:i+patch_diagonal, j:j + patch_diagonal]
+
+                if is_jumpcut(img1_patch, t_patch, jumpcut_threshold) or \
+                        is_jumpcut(t_patch, img2_patch, jumpcut_threshold):
+                    jumpcuts += 1
+                    continue
+
+                flow = cv.optflow.calcOpticalFlowSF(img1_patch, img2_patch, layers=3, averaging_block_size=2, max_flow=4)
+
+                n = np.sum(1 - np.isnan(flow), axis=(0,1))
+                flow[np.isnan(flow)] = 0
+
+                flow_magnitude = np.linalg.norm(flow.sum(axis=(0,1)) / n)
+
+                if random.random() > flow_magnitude / flow_threshold:
+                    flowfiltered += 1
+                    continue
+
+                if force_horizontal:
+                    dir_ok, avg_direction = is_single_direction(flow, check_vectors_magnitude_ratio=0.20, check_vectors_max_angle_difference=10, check_vectors_max_error_ratio=0.25)
+                    if not dir_ok:
+                        directionfiltered += 1
+                        continue
+
+                    anglePreRotation = vector_direction_deg(avg_direction[0], avg_direction[1])
+
+                    targetRotation = 90 if random.random() > 0.5 else 270
+
+                    rotation = targetRotation - anglePreRotation
+                else:
+                    rotation = 0
+
+                patches.append({
+                    "left_frame": tup[0],
+                    "middle_frame": tup[1],
+                    "right_frame": tup[2],
+                    "patch_i": i,
+                    "patch_j": j,
+                    "patch_diagonal": patch_diagonal,
+                    "rotation": rotation,
+                    "custom": True
+                })
+        
+        print(f"Worker starting at frame {basename(tuples[0][0])} is {100.0 * tup_index / len(tuples)} % complete with {len(patches)} interessting patches found")
+
+    print('===> Processed {} tuples, {} patches extracted, {} discarded as jumpcuts, {} filtered by flow, {} filtered by direction'.format(
+        len(tuples), len(patches), 100.0 * jumpcuts / total_count, 100.0 * flowfiltered / total_count, 100.0 * directionfiltered / total_count
+    ))
+
+    return patches
+        
 
 def _extract_patches(tuples, max_per_frame=1, trials_per_tuple=100, flow_threshold=25.0, jumpcut_threshold=np.inf,
                      workers=0):
@@ -323,6 +533,23 @@ def _extract_patches(tuples, max_per_frame=1, trials_per_tuple=100, flow_thresho
 
     return patches
 
+def _extract_custom_patches(tuples, flow_threshold, jumpcut_threshold, force_horizontal, workers):
+    tick_t = timer()
+    print("===> Extracing custom patches...")
+
+    if workers != 0:
+        parallel = Parallel(n_jobs=workers, backend="threading", verbose=5)
+        tuples_per_job = len(tuples) // workers + 1
+        result = parallel(delayed(_extract_custom_patches_worker)(tuples[i:i+tuples_per_job], flow_threshold,
+                                jumpcut_threshold, force_horizontal) for i in range(0, len(tuples), tuples_per_job))
+        patches = sum(result, [])
+    else:
+        patches = _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, force_horizontal)
+    
+    tock_t = timer()
+    print("Done. Took ~{}s".format(round(tock_t - tick_t)))
+
+    return patches
 
 ############################################### CACHE ###############################################
 
@@ -362,7 +589,7 @@ def _cache_patches_worker(cache_dir, patches):
         frames = load_patch(p)
         for i in range(3):
             file_name = '{}_{}.jpg'.format(patch_id, i)
-            frames[i].save(join(cache_dir, file_name))
+            frames[i].save(join(cache_dir, file_name), 'JPEG', quality=95)
 
 
 def _cache_patches(cache_dir, patches, workers=0):
@@ -420,17 +647,32 @@ def prepare_dataset(dataset_dir=None, force_rebuild=False):
 
         return patches
 
-    davis_dir = get_davis_17(dataset_dir)
-    tuples = tuples_from_davis(davis_dir, res='480p')
+    if config.DATASET == "DAVIS":
+        print("Working with DAVIS dataset")
+        davis_dir = get_davis_17(dataset_dir)
+        tuples = tuples_from_davis(davis_dir, res='480p')
 
-    patches = _extract_patches(
-        tuples,
-        max_per_frame=20,
-        trials_per_tuple=30,
-        flow_threshold=25.0,
-        jumpcut_threshold=8e-3,
-        workers=workers
-    )
+        patches = _extract_patches(
+            tuples,
+            max_per_frame=20,
+            trials_per_tuple=30,
+            flow_threshold=25.0,
+            jumpcut_threshold=8e-3,
+            workers=workers
+        )
+
+    else:
+        ddir = join(config.DATASET_DIR, "frames")
+        print(f"Working with dataset in {ddir}")
+        tuples = tuples_from_custom(ddir)
+        patches = _extract_custom_patches(
+            tuples,
+            flow_threshold=8.0,
+            jumpcut_threshold=8e-3,
+            force_horizontal=config.FORCE_HORIZONTAL,
+            workers=workers
+        )
+
 
     # shuffle patches before writing to file
     random.shuffle(patches)

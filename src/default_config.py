@@ -39,6 +39,13 @@ NUM_WORKERS: int = 0
 # Random seed fed to torch
 SEED: int = None
 
+# "DAVIS" or "custom". Custom searches all direct subdirectories of the given directory for images, names as <framenumber>.<jpg|jpeg|png>, each subdirectory should start counting from 0, writes the patches.json for them and might cache them in a cache directory for faster access
+# custom does not yet support validation or visual test sets, that should change.... #TODO
+DATASET = "DAVIS"
+
+# rotate the patches such that the main movement, according to the optical flow, is horizontal
+FORCE_HORIZONTAL = False
+
 # Path to the dataset directory
 DATASET_DIR = './dataset'
 

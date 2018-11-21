@@ -5,9 +5,15 @@ import numpy as np
 from PIL import Image
 import random
 
+import scipy.ndimage
+
+import scipy.misc
+
 from matplotlib import pyplot
 
 from src.data_manager import load_img, simple_flow
+
+from src.data_manager import tuples_from_custom
 
 def vector_direction_deg(x, y):
     """
@@ -35,10 +41,13 @@ def is_single_direction(flow, check_vectors_magnitude_ratio = 0.8, check_vectors
     for y in range(flow.shape[0]):
         for x in range(flow.shape[1]):
             vec = flow[y,x]
-            if np.linalg.norm(vec) > 0:
+            # do not consider very small flow vectors
+            if np.linalg.norm(flow[y,x] > 0.5):
                 flow_vecs.append(flow[y, x])
 
-    avg_direction /= np.linalg.norm(avg_direction)
+    # too little movement in the patch
+    if len(flow_vecs) < 100:
+        return (False, avg_direction)
 
     avg_direction_angle = vector_direction_deg(avg_direction[0], avg_direction[1])
 
@@ -69,12 +78,12 @@ def is_single_direction(flow, check_vectors_magnitude_ratio = 0.8, check_vectors
     
     fail_ratio = num_check_fails / float(checked_vecs)
 
-    print("FR", fail_ratio, len(flow_vecs))
-
     return (fail_ratio < check_vectors_max_error_ratio, avg_direction)
 
-img1 = load_img("testimages/25000.jpg")
-img2 = load_img("testimages/25004.jpg")
+print(len(tuples_from_custom("video/raw/frames")))
+
+img1 = load_img("video/raw/frames/FjU_x1106pg/255000.jpg")
+img2 = load_img("video/raw/frames/FjU_x1106pg/255004.jpg")
 
 pil_to_numpy = lambda x: np.array(x)[:, :, ::-1]
 
@@ -87,6 +96,7 @@ img_h = img1.shape[0]
 img_w = img1.shape[1]
 patch_h = 150
 patch_w = 150
+flow_threshold = 6
 
 assert(patch_h == patch_w)
 
@@ -113,21 +123,45 @@ for pw in range(patch_num_w):
 
         patch = cv.optflow.calcOpticalFlowSF(img1_patch, img2_patch, layers=3, averaging_block_size=2, max_flow=4)
 
-        #patch = flow[i:i+patch_diagonal, j:j + patch_diagonal]
-
         n = np.sum(1 - np.isnan(patch), axis=(0,1))
         patch[np.isnan(patch)] = 0
-        flow_magnitude = np.linalg.norm(np.sum(patch, axis=(0,1)) / n)
 
-        print(flow_magnitude, patch.shape)
+        flow_magnitude = np.linalg.norm( patch.sum(axis=(0,1)) / n)
 
-        result = is_single_direction(patch, check_vectors_magnitude_ratio = 0.6, check_vectors_max_angle_difference=12, check_vectors_max_error_ratio=0.25)
+        if random.random() < flow_magnitude / flow_threshold:
+            result = is_single_direction(patch, check_vectors_magnitude_ratio = 0.4, check_vectors_max_angle_difference=12, check_vectors_max_error_ratio=0.40)
+            if result[0]:
+                avg_direction = result[1]
 
-        if result[0]:
-            pyplot.imshow(img1_patch)
-            pyplot.show()
-            pyplot.imshow(img2_patch)
-            pyplot.show()
+                anglePreRotation = vector_direction_deg(avg_direction[0], avg_direction[1])
+
+                targetRotation = 90 if random.random() > 0.5 else 270
+
+                r = targetRotation - anglePreRotation
+
+                i1rotated = scipy.ndimage.interpolation.rotate(img1_patch, r, reshape=False)
+                i2rotated = scipy.ndimage.interpolation.rotate(img2_patch, r, reshape=False)
+
+                mx = patch_diagonal // 2
+                my = patch_diagonal // 2
+
+                halfW = patch_w // 2
+                halfH = patch_h // 2
+
+                final_patch1 = i1rotated[my - halfH : my + halfH, mx - halfW : mx + halfW]
+                final_patch2 = i2rotated[my - halfH : my + halfH, mx - halfW : mx + halfW]
+
+                _, axarr = pyplot.subplots(2,2)
+
+                scipy.misc.imsave('/ImbaKeks/final_patch1.png', final_patch1)
+                scipy.misc.imsave('/ImbaKeks/final_patch2.png', final_patch2)
+
+                axarr[0,0].imshow(img1_patch)
+                axarr[1,0].imshow(final_patch1)
+                axarr[0,1].imshow(img2_patch)
+                axarr[1,1].imshow(final_patch2)
+
+                pyplot.show()
 
 
 
