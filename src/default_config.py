@@ -80,3 +80,11 @@ START_FROM_EXISTING_MODEL = None
 LOSS: str = "l1"
 
 VGG_FACTOR: float = 1.0
+
+GENERATE_PARALLAX_VIEW: bool = False
+PARALLAX_VALIDATION: bool = False
+
+PARALLAX_VIEW_T: int = 193
+PARALLAX_VIEW_CAM_INTERVAL: int = 16
+PARALLAX_OUTPUT_DIR = "./video/icme/parallax_d3_c2/"
+PARALLAX_DATASET_DIR = "./video/icme/Development_dataset_3"

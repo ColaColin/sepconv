@@ -39,6 +39,26 @@ def is_image(file_path):
     """
     return any(file_path.endswith(extension) for extension in [".png", ".jpg", ".jpeg"])
 
+def load_images(directory_path):
+    """
+    Reads all images that are directly inside the given directory as pil images
+    """
+    results = []
+
+    image_files = []
+
+    for f in listdir(directory_path):
+        if is_image(f):
+            image_files.append(f)
+
+    # don't want to trust whatever sorting listdir comes up with. Files are named as frame numbers and should be sorted as such
+    image_files = sorted(image_files, key=lambda x: int(splitext(x)[0]))
+
+    for f in image_files:
+        f = join(directory_path, f)
+        results.append(load_img(f))
+
+    return results
 
 def load_tuples(root_path, stride, tuple_size, paths_only=True):
     """

@@ -12,7 +12,7 @@ from os import makedirs, link, remove
 from timeit import default_timer as timer
 import src.config as config
 from src import loss
-from src.data_manager import load_img
+from src.data_manager import load_img, load_images
 from src.model import Net
 from src.dataset import get_training_set, get_validation_set, get_visual_test_set, pil_to_tensor
 from src.interpolate import interpolate
@@ -35,13 +35,14 @@ if config.SEED is not None:
 
 # ----------------------------------------------------------------------
 
-print('===> Loading datasets...')
-train_set = get_training_set()
-validation_set = get_validation_set()
-visual_test_set = get_visual_test_set()
-training_data_loader = DataLoader(dataset=train_set, num_workers=config.NUM_WORKERS, batch_size=config.BATCH_SIZE,
-                                  shuffle=True)
-validation_data_loader = DataLoader(dataset=validation_set, num_workers=config.NUM_WORKERS,
+if not config.GENERATE_PARALLAX_VIEW:
+    print('===> Loading datasets...')
+    train_set = get_training_set()
+    validation_set = get_validation_set()
+    visual_test_set = get_visual_test_set()
+    training_data_loader = DataLoader(dataset=train_set, num_workers=config.NUM_WORKERS, batch_size=config.BATCH_SIZE,
+                                    shuffle=True)
+    validation_data_loader = DataLoader(dataset=validation_set, num_workers=config.NUM_WORKERS,
                                     batch_size=config.BATCH_SIZE, shuffle=False)
 
 if config.START_FROM_EXISTING_MODEL is not None:
@@ -79,22 +80,23 @@ def train(epoch):
 
         optimizer.zero_grad()
 
-        print('Forward pass...')
+        #print('Forward pass...')
         output = model(input)
 
         loss_ = loss_function(output, target)
 
-        print('Computing gradients...')
+        #print('Computing gradients...')
         loss_.backward()
 
-        print('Gradients ready.')
+        #print('Gradients ready.')
         optimizer.step()
 
         loss_val = loss_.item()
         epoch_loss += loss_val
 
         board_writer.add_scalar('data/iter_training_loss', loss_val, iteration)
-        print("===> Epoch[{}]({}/{}): Loss: {:.4f}".format(epoch, iteration, len(training_data_loader), loss_val))
+        if iteration % 50 == 0:
+            print("===> Epoch[{}]({}/{}): Loss: {:.4f}".format(epoch, iteration, len(training_data_loader), loss_val))
 
     weight_l2s = 0
     weight_diff_l2s = 0
@@ -146,6 +148,53 @@ def validate(epoch):
     board_writer.add_scalar('data/epoch_psnr', valid_psnr, epoch)
     print("===> Validation loss: {:.4f}".format(valid_loss))
 
+def generate_parallax_view(t, cam_interval, cam_views):
+    """
+    cam_views is expected to be an array of pil images
+    returns an array of pil images
+    """
+    output = []
+    for w in range(1, t+1):
+        if (w - 1) % cam_interval == 0:
+            output.append(cam_views[(w-1) // cam_interval])
+        else:
+            output.append(None)
+    
+    while cam_interval > 1:
+        r_dot = cam_interval // 2
+        for w in range(1, t - cam_interval + 1, cam_interval):
+            output[w + r_dot - 1] = interpolate(model, output[w - 1], output[w + cam_interval - 1])
+        cam_interval = r_dot
+
+    return output
+
+def run_parallax_view_generation(save_images=True):
+    t = config.PARALLAX_VIEW_T
+    cam_interval = config.PARALLAX_VIEW_CAM_INTERVAL
+    parallax_output_dir = config.PARALLAX_OUTPUT_DIR
+    
+    if save_images:
+        makedirs(parallax_output_dir, exist_ok = True)
+
+    images = load_images(config.PARALLAX_DATASET_DIR)
+    
+    input_images = []
+    for w in range(0, t, cam_interval):
+        input_images.append(images[w])
+
+    parallax_view = generate_parallax_view(t, cam_interval, input_images)
+
+    worstPsnr = 999999999
+
+    for index, view in enumerate(parallax_view):
+        if index % cam_interval != 0:
+            p = psnr(pil_to_tensor(view), pil_to_tensor(images[index])).item()
+            if p < worstPsnr:
+                worstPsnr = p
+        if save_images:
+            view.save(join_paths(parallax_output_dir, '{}.jpg'.format(index+1)), 'JPEG', quality=95)
+
+    return worstPsnr
 
 def visual_test(epoch):
     print("===> Running visual test...")
@@ -160,14 +209,21 @@ def visual_test(epoch):
 
 tick_t = timer()
 
-for epoch in range(1, config.EPOCHS + 1):
-    train(epoch)
-    if config.SAVE_CHECKPOINS:
-        save_checkpoint(epoch)
-    if config.VALIDATION_ENABLED:
-        validate(epoch)
-    if config.VISUAL_TEST_ENABLED:
-        visual_test(epoch)
+if config.GENERATE_PARALLAX_VIEW:
+    print("PSNR is ", run_parallax_view_generation())
+else:
+    for epoch in range(1, config.EPOCHS + 1):
+        train(epoch)
+        if config.SAVE_CHECKPOINS:
+            save_checkpoint(epoch)
+        if config.VALIDATION_ENABLED:
+            validate(epoch)
+        if config.PARALLAX_VALIDATION:
+            _psnr = run_parallax_view_generation(save_images=False)
+            board_writer.add_scalar('data/epoch_validation_psnr', _psnr, epoch)
+            print("===> Validation PSNR: {:.3f}".format(_psnr))
+        if config.VISUAL_TEST_ENABLED:
+            visual_test(epoch)
 
 tock_t = timer()
 
