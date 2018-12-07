@@ -78,17 +78,18 @@ def train(epoch):
     for iteration, batch in enumerate(training_data_loader, 1):
         input, target = batch[0].to(device), batch[1].to(device)
 
+        print("IN shape", input.shape, "Target shape", target.shape)
+
         optimizer.zero_grad()
 
-        #print('Forward pass...')
-        output = model(input)
+        output = model(input, config.SEQUENCE_LENGTH, False)
+
+        print("OUT", output.shape)
 
         loss_ = loss_function(output, target)
 
-        #print('Computing gradients...')
         loss_.backward()
 
-        #print('Gradients ready.')
         optimizer.step()
 
         loss_val = loss_.item()

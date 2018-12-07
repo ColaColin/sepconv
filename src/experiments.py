@@ -8,11 +8,13 @@ from os.path import join
 from src.model import Net
 from src.interpolate import interpolate
 from src.extract_frames import extract_frames
-from src.data_manager import load_img
+from src.data_manager import load_img, tuples_from_custom
 from src.dataset import pil_to_tensor, get_validation_set
 from src.utilities import psnr
 from src.loss import ssim
 import src.config as config
+import cv2 as cv
+import numpy as np
 
 
 def test_metrics(model, video_path=None, frames=None, output_folder=None):
@@ -129,5 +131,24 @@ def test_all():
     # test_wiz(best_model_quantitative, output_folder='/project/exp/wiz_quant/')
     print('avg_ssim: 0.9638479389642415, avg_psnr: 36.52394056822124')
 
+def find_icme_optical_flow_magnitude():
+    tuples = tuples_from_custom("./video/icme/")
+
+    pil_to_numpy = lambda x: np.array(x)[:, :, ::-1]
+
+    for tup_index in range(len(tuples)):
+        tup = tuples[tup_index]
+        imgs = [load_img(x) for x in tup]
+        imgs = [pil_to_numpy(x) for x in imgs]
+
+        for pair_idx in range(2, len(imgs)):
+            img1 = imgs[pair_idx - 2]
+            img2 = imgs[pair_idx]
+            flow = cv.optflow.calcOpticalFlowSF(img1, img2, layers=3, averaging_block_size=2, max_flow=4)
+            n = np.sum(1 - np.isnan(flow), axis=(0,1))
+            flow[np.isnan(flow)] = 0
+            flow_magnitude = np.linalg.norm(flow.sum(axis=(0,1)) / n)
+            print(f"Flow magnitude {tup[pair_idx-2]} to {tup[pair_idx]} is {flow_magnitude}")
+
 if __name__ == '__main__':
-    test_all()
+    find_icme_optical_flow_magnitude()

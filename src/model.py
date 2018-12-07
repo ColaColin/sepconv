@@ -83,7 +83,7 @@ class Net(nn.Module):
     def interpolate_batch(self, *args):
         return interpol.interpolate_batch(self, *args)
 
-    def forward(self, x):
+    def forward(self, x, seq_length, use_padding):
 
         i1 = x[:, :3]
         i2 = x[:, 3:6]
@@ -126,6 +126,8 @@ class Net(nn.Module):
 
         # ------------ Final branches ------------
 
+        print("x.shape", x.shape)
+
         k2h = self.upconv51_1(x)
 
         k2v = self.upconv51_2(x)
@@ -134,8 +136,19 @@ class Net(nn.Module):
 
         k1v = self.upconv51_4(x)
 
-        padded_i2 = self.pad(i2)
-        padded_i1 = self.pad(i1)
+        if use_padding:
+            padded_i2 = self.pad(i2)
+            padded_i1 = self.pad(i1)
+        else:
+            padded_i1 = i1.contiguous()
+            padded_i2 = i2.contiguous()
+
+            #cut away parts of the produced kernels that are never used anyway. Should not hurt training, since the network is fully convolutional, no training information is missed
+            cut = config.OUTPUT_1D_KERNEL_SIZE // 2
+            k2h = k2h[:,:,cut:-cut,cut:-cut].contiguous()
+            k2v = k2v[:,:,cut:-cut,cut:-cut].contiguous()
+            k1h = k1h[:,:,cut:-cut,cut:-cut].contiguous()
+            k1v = k1v[:,:,cut:-cut,cut:-cut].contiguous()
 
         # ------------ Local convolutions ------------
 
@@ -147,7 +160,11 @@ class Net(nn.Module):
 
         # print("right black bar position", i2[0,:,25 + 105,25 + 190], "k1v", k1v[0,:, 25 + 105, 25 + 190], "k1h", k1h[0, :, 25 + 105, 25 + 190])
 
-        return self.separable_conv(padded_i2, k2v, k2h) + self.separable_conv(padded_i1, k1v, k1h)
+        result = self.separable_conv(padded_i2, k2v, k2h) + self.separable_conv(padded_i1, k1v, k1h)
+
+        print(result.shape)
+
+        return result
 
     @staticmethod
     def _check_gradients(func):

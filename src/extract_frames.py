@@ -39,7 +39,7 @@ if __name__ == '__main__':
     def handleFrame(i, frame):
         file_name = '{:05d}.jpg'.format(i)
         file_path = join(params.dest, file_name)
-        frame.save(file_path, 'JPEG', quality=90)
+        frame.save(file_path, 'JPEG', quality=95)
         print("Stored frame %s" % file_path)
 
     extract_frames(params.src, handleFrame)

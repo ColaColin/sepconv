@@ -20,7 +20,7 @@ CACHE_PATCHES: bool = False
 # Number of epochs used for training
 EPOCHS: int = 10
 
-# Kernel size of the custom Separable Convolution layer
+# Kernel size of the custom Separable Convolution layer. Cannot be changed without changing the cuda kernel code
 OUTPUT_1D_KERNEL_SIZE: int = 51
 
 # The batch size used for mini batch gradient descent
@@ -42,6 +42,21 @@ SEED: int = None
 # "DAVIS" or "custom". Custom searches all direct subdirectories of the given directory for images, names as <framenumber>.<jpg|jpeg|png>, each subdirectory should start counting from 0, writes the patches.json for them and might cache them in a cache directory for faster access
 # custom does not yet support validation or visual test sets, that should change.... #TODO
 DATASET = "DAVIS"
+
+# length of image sequences captures, specifies number of images to be generated in the middle of the first and the last image
+# the dataset needs to be generated with a length bigger or equal to the one used when training the network
+# must be a power of 2 plus 1, at least 3. Reasonable for small patches is probably at most 9...
+# != 3 is only supported for custom dataset and FORCE_HORIZONTAL = False
+SEQUENCE_LENGTH = 3
+
+# number of frames between frames packed together as tuples
+CUSTOM_STRIDE = 2
+
+# number of frames skipped after a set of frames used for a tuple
+# only supported for custom dataset
+CUSTOM_FRAMESKIP = 90
+
+FLOW_THRESHOLD: float = 25
 
 # rotate the patches such that the main movement, according to the optical flow, is horizontal
 FORCE_HORIZONTAL = False

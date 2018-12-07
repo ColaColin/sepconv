@@ -90,7 +90,10 @@ def load_patch(patch):
     :return: Tuple of PIL.Image objects corresponding to the patch
     """
 
-    paths = (patch['left_frame'], patch['middle_frame'], patch['right_frame'])
+    if "frames" in patch:
+        paths = patch["frames"]
+    else:
+        paths = (patch['left_frame'], patch['middle_frame'], patch['right_frame'])
     i, j = (patch['patch_i'], patch['patch_j'])
     h, w = config.PATCH_SIZE
     imgs = [load_img(x) for x in paths]
@@ -122,7 +125,7 @@ def load_patch(patch):
 
 def load_cached_patch(cached_patch):
     """
-    Reads the three cached images of a patch from disk. Can only be used if the patches
+    Reads the cached images of a patch from disk. Can only be used if the patches
     have been previously cached.
     :param cached_patch: Patch as a tuple (path_to_left, path_to_middle, path_to_right)
     :return: Tuple of PIL.Image objects corresponding to the patch
@@ -224,15 +227,22 @@ def tuples_from_custom(custom_dir):
             
             frame_paths = [join(custom_dir, f, x) for x in image_files]
 
-            stride = 2 # number of frames between frames packed togather as tuples
-            frameskip = 10 # number of frames skipped after a set of frames used for a tuple
+            stride = config.CUSTOM_STRIDE # number of frames between frames packed togather as tuples
+            frameskip = config.CUSTOM_FRAMESKIP # number of frames skipped after a set of frames used for a tuple
+
+            added = 0
 
             i = 0
-            while i + 2*stride < len(frame_paths):
-                x1, t, x2 = frame_paths[i], frame_paths[i + 1 * stride], frame_paths[i + 2*stride]
-                tuples.append((x1, t, x2))
-                i += 2 * stride
+            while i + config.SEQUENCE_LENGTH * stride < len(frame_paths):
+                tuple = []
+                for tindex in range(config.SEQUENCE_LENGTH):
+                    tuple.append(frame_paths[i + tindex * stride])
+                added += 1
+                tuples.append(tuple)
+                i += config.SEQUENCE_LENGTH * stride
                 i += frameskip
+
+            print(f"Got {added} tuples from {join(custom_dir, f)}")
 
     print(f"Will consider {len(tuples)} custom tuples")
 
@@ -434,6 +444,8 @@ def is_single_direction(flow, check_vectors_magnitude_ratio = 0.8, check_vectors
     return (fail_ratio < check_vectors_max_error_ratio, avg_direction)
 
 def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, force_horizontal):
+    assert config.SEQUENCE_LENGTH == 3 or not config.FORCE_HORIZONTAL, "using a sequence length of above 3 with force horizontal is not implemented to work correctly"
+
     patch_h, patch_w = config.PATCH_SIZE
 
     assert(patch_h == patch_w)
@@ -452,14 +464,11 @@ def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, fo
     for tup_index in range(len(tuples)):
         tup = tuples[tup_index]
 
-        left, middle, right = (load_img(x) for x in tup)
+        imgs = [load_img(x) for x in tup]
 
-        img_w, img_h = left.size
+        img_w, img_h = imgs[0].size
 
-        left = pil_to_numpy(left)
-        middle = pil_to_numpy(middle)
-        right = pil_to_numpy(right)
-
+        imgs = [pil_to_numpy(x) for x in imgs]
         patch_num_w = int(img_w / patch_diagonal)
         patch_num_h = int(img_h / patch_diagonal)
 
@@ -468,56 +477,76 @@ def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, fo
 
         for pw in range(patch_num_w):
             for ph in range(patch_num_h):
+
+                # don't process all parts of all frames, increase variation accross more scenes
+                if random.random() > 0.7:
+                    continue
+
                 total_count += 1
 
                 i = top_space + ph * patch_diagonal
                 j = right_space + pw * patch_diagonal
 
-                img1_patch = left[i:i+patch_diagonal, j:j + patch_diagonal]
-                t_patch = middle[i:i+patch_diagonal, j:j + patch_diagonal]
-                img2_patch = right[i:i+patch_diagonal, j:j + patch_diagonal]
+                candidate_seq = [x[i:i+patch_diagonal, j:j+patch_diagonal] for x in imgs]
 
-                if is_jumpcut(img1_patch, t_patch, jumpcut_threshold) or \
-                        is_jumpcut(t_patch, img2_patch, jumpcut_threshold):
-                    jumpcuts += 1
+                skip = False
+
+                for pair_idx in range(1, len(imgs)):
+                    if is_jumpcut(candidate_seq[pair_idx-1], candidate_seq[pair_idx], jumpcut_threshold):
+                        jumpcuts += 1
+                        skip = True
+                        break
+
+                if skip:
                     continue
 
-                flow = cv.optflow.calcOpticalFlowSF(img1_patch, img2_patch, layers=3, averaging_block_size=2, max_flow=4)
+                flow_fails = 0
 
-                n = np.sum(1 - np.isnan(flow), axis=(0,1))
-                flow[np.isnan(flow)] = 0
+                for pair_idx in range(2, len(imgs)):
+                    img1 = candidate_seq[pair_idx - 2]
+                    img2 = candidate_seq[pair_idx]
 
-                flow_magnitude = np.linalg.norm(flow.sum(axis=(0,1)) / n)
+                    flow = cv.optflow.calcOpticalFlowSF(img1, img2, layers=3, averaging_block_size=2, max_flow=4)
 
-                if random.random() > flow_magnitude / flow_threshold:
+                    n = np.sum(1 - np.isnan(flow), axis=(0,1))
+
+                    flow[np.isnan(flow)] = 0
+
+                    flow_magnitude = np.linalg.norm(flow.sum(axis=(0,1)) / n)
+
+                    rx = random.random()
+                    if rx > flow_magnitude / flow_threshold:
+                        flow_fails += 1
+
+                    if force_horizontal:
+                        dir_ok, avg_direction = is_single_direction(flow, check_vectors_magnitude_ratio=0.20, 
+                            check_vectors_max_angle_difference=10, check_vectors_max_error_ratio=0.25)
+                        if not dir_ok:
+                            directionfiltered += 1
+                            skip = True
+                            break
+
+                        anglePreRotation = vector_direction_deg(avg_direction[0], avg_direction[1])
+
+                        targetRotation = 90 if random.random() > 0.5 else 270
+
+                        rotation = targetRotation - anglePreRotation
+                    else:
+                        rotation = 0
+
+                if flow_fails >= len(imgs) // 3:
                     flowfiltered += 1
                     continue
 
-                if force_horizontal:
-                    dir_ok, avg_direction = is_single_direction(flow, check_vectors_magnitude_ratio=0.20, check_vectors_max_angle_difference=10, check_vectors_max_error_ratio=0.25)
-                    if not dir_ok:
-                        directionfiltered += 1
-                        continue
-
-                    anglePreRotation = vector_direction_deg(avg_direction[0], avg_direction[1])
-
-                    targetRotation = 90 if random.random() > 0.5 else 270
-
-                    rotation = targetRotation - anglePreRotation
-                else:
-                    rotation = 0
-
                 patches.append({
-                    "left_frame": tup[0],
-                    "middle_frame": tup[1],
-                    "right_frame": tup[2],
+                    "frames": tup,
                     "patch_i": i,
                     "patch_j": j,
                     "patch_diagonal": patch_diagonal,
                     "rotation": rotation,
                     "custom": True
                 })
-        
+
         print(f"Worker starting at frame {basename(tuples[0][0])} is {100.0 * tup_index / len(tuples)} % complete with {len(patches)} interessting patches found")
 
     print('===> Processed {} tuples, {} patches extracted, {} discarded as jumpcuts, {} filtered by flow, {} filtered by direction'.format(
@@ -591,9 +620,8 @@ def get_cached_patches(dataset_dir=None):
 
     tuples = []
 
-    for i in range(len(frame_paths) // 3):
-        x1, t, x2 = frame_paths[i * 3], frame_paths[i * 3 + 1], frame_paths[i * 3 + 2]
-        tuples.append((x1, t, x2))
+    for i in range(len(frame_paths) // config.SEQUENCE_LENGTH):
+        tuples.append((frame_paths[i * config.SEQUENCE_LENGTH + ix] for ix in range(config.SEQUENCE_LENGTH)))
 
     return tuples
 
@@ -607,7 +635,7 @@ def _cache_patches_worker(cache_dir, patches):
     for p in patches:
         patch_id = str(random.randint(1e10, 1e16))
         frames = load_patch(p)
-        for i in range(3):
+        for i in range(config.SEQUENCE_LENGTH):
             file_name = '{}_{}.jpg'.format(patch_id, i)
             frames[i].save(join(cache_dir, file_name), 'JPEG', quality=95)
 
@@ -676,7 +704,7 @@ def prepare_dataset(dataset_dir=None, force_rebuild=False):
             tuples,
             max_per_frame=20,
             trials_per_tuple=30,
-            flow_threshold=25.0,
+            flow_threshold=config.FLOW_THRESHOLD,
             jumpcut_threshold=8e-3,
             workers=workers
         )
@@ -687,7 +715,7 @@ def prepare_dataset(dataset_dir=None, force_rebuild=False):
         tuples = tuples_from_custom(ddir)
         patches = _extract_custom_patches(
             tuples,
-            flow_threshold=8.0,
+            flow_threshold=config.FLOW_THRESHOLD,
             jumpcut_threshold=8e-3,
             force_horizontal=config.FORCE_HORIZONTAL,
             workers=workers
