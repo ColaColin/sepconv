@@ -80,9 +80,16 @@ class PatchDataset(data.Dataset):
             return lst
 
     def __getitem__(self, index):
-        frames = self.load_patch(self.patches[index])
+        patch_frames = list(self.patches[index])
+
+        if (config.SEQUENCE_LENGTH != config.MAX_SEQUENCE_LENGTH):
+            maxoffset = config.MAX_SEQUENCE_LENGTH - config.SEQUENCE_LENGTH
+            offset = random.randint(0, maxoffset)
+            patch_frames = patch_frames[offset:offset+config.SEQUENCE_LENGTH]
+
+        frames = self.load_patch(patch_frames)
         aug_transform = self.get_aug_transform()
-        lst = [pil_to_tensor(self.crop(aug_transform(x))) for x in frames]
+        lst = [pil_to_tensor(aug_transform(x)) for x in frames]
 
         lst = self.random_temporal_order_swap(lst)
 

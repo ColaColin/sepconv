@@ -233,13 +233,13 @@ def tuples_from_custom(custom_dir):
             added = 0
 
             i = 0
-            while i + config.SEQUENCE_LENGTH * stride < len(frame_paths):
+            while i + config.MAX_SEQUENCE_LENGTH * stride < len(frame_paths):
                 tuple = []
-                for tindex in range(config.SEQUENCE_LENGTH):
+                for tindex in range(config.MAX_SEQUENCE_LENGTH):
                     tuple.append(frame_paths[i + tindex * stride])
                 added += 1
                 tuples.append(tuple)
-                i += config.SEQUENCE_LENGTH * stride
+                i += config.MAX_SEQUENCE_LENGTH * stride
                 i += frameskip
 
             print(f"Got {added} tuples from {join(custom_dir, f)}")
@@ -444,7 +444,7 @@ def is_single_direction(flow, check_vectors_magnitude_ratio = 0.8, check_vectors
     return (fail_ratio < check_vectors_max_error_ratio, avg_direction)
 
 def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, force_horizontal):
-    assert config.SEQUENCE_LENGTH == 3 or not config.FORCE_HORIZONTAL, "using a sequence length of above 3 with force horizontal is not implemented to work correctly"
+    assert config.MAX_SEQUENCE_LENGTH == 3 or not config.FORCE_HORIZONTAL, "using a sequence length of above 3 with force horizontal is not implemented to work correctly"
 
     patch_h, patch_w = config.PATCH_SIZE
 
@@ -620,8 +620,9 @@ def get_cached_patches(dataset_dir=None):
 
     tuples = []
 
-    for i in range(len(frame_paths) // config.SEQUENCE_LENGTH):
-        tuples.append((frame_paths[i * config.SEQUENCE_LENGTH + ix] for ix in range(config.SEQUENCE_LENGTH)))
+    for i in range(len(frame_paths) // config.MAX_SEQUENCE_LENGTH):
+        foo = (frame_paths[i * config.MAX_SEQUENCE_LENGTH + ix] for ix in range(config.MAX_SEQUENCE_LENGTH))
+        tuples.append(list(foo))
 
     return tuples
 
@@ -635,7 +636,7 @@ def _cache_patches_worker(cache_dir, patches):
     for p in patches:
         patch_id = str(random.randint(1e10, 1e16))
         frames = load_patch(p)
-        for i in range(config.SEQUENCE_LENGTH):
+        for i in range(config.MAX_SEQUENCE_LENGTH):
             file_name = '{}_{}.jpg'.format(patch_id, i)
             frames[i].save(join(cache_dir, file_name), 'JPEG', quality=95)
 

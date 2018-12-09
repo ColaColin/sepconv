@@ -13,7 +13,7 @@ from timeit import default_timer as timer
 import src.config as config
 from src import loss
 from src.data_manager import load_img, load_images
-from src.model import Net
+from src.model import Net, _make_target_crop
 from src.dataset import get_training_set, get_validation_set, get_visual_test_set, pil_to_tensor
 from src.interpolate import interpolate
 from src.utilities import psnr
@@ -75,16 +75,17 @@ def train(epoch):
     print("===> Training...")
     before_pass = [p.data.clone() for p in model.parameters()]
     epoch_loss = 0
+
+    target_crop = _make_target_crop(config.PATCH_SIZE[0], config.PATCH_SIZE[1], config.CROP_SIZE, config.CROP_SIZE)
+
     for iteration, batch in enumerate(training_data_loader, 1):
         input, target = batch[0].to(device), batch[1].to(device)
 
-        print("IN shape", input.shape, "Target shape", target.shape)
+        target = target_crop(target)
 
         optimizer.zero_grad()
 
         output = model(input, config.SEQUENCE_LENGTH, False)
-
-        print("OUT", output.shape)
 
         loss_ = loss_function(output, target)
 
@@ -213,7 +214,7 @@ tick_t = timer()
 if config.GENERATE_PARALLAX_VIEW:
     print("PSNR is ", run_parallax_view_generation())
 else:
-    for epoch in range(1, config.EPOCHS + 1):
+    for epoch in range(config.START_FROM_EPOCH, config.EPOCHS + 1):
         train(epoch)
         if config.SAVE_CHECKPOINS:
             save_checkpoint(epoch)

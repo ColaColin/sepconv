@@ -25,9 +25,6 @@ class SeparableConvolution(torch.autograd.Function):
         intOutputHeight = min(vertical.size(2), horizontal.size(2))
         intOutputWidth = min(vertical.size(3), horizontal.size(3))
 
-        print(vertical.size())
-        print(intInputHeight - 51, intOutputWidth, intOutputHeight)
-
         assert(intInputHeight - 51 == intOutputHeight - 1)
         assert(intInputWidth - 51 == intOutputWidth - 1)
         assert(intFilterSize == 51)

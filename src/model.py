@@ -11,6 +11,17 @@ from libs.sepconv.SeparableConvolution import SeparableConvolution
 import src.config as config
 import src.interpolate as interpol
 
+from src.interpolate import _get_padding_modules
+
+def _make_target_crop(width, height, target_w, target_h):
+    tcw = (width - target_w)
+    tch = (height - target_h)
+    tcl = tcw // 2
+    tcr = tcw - tcl
+    tct = tch // 2
+    tcb = tch - tct
+    target_crop = nn.ReplicationPad2d([-tcl, -tcr, -tct, -tcb])
+    return target_crop
 
 class Net(nn.Module):
 
@@ -83,10 +94,26 @@ class Net(nn.Module):
     def interpolate_batch(self, *args):
         return interpol.interpolate_batch(self, *args)
 
-    def forward(self, x, seq_length, use_padding):
+    # use_padding = False still requires some padding in case the input size cannot be divided by 2 5 times to make the network architecture work out
+    # this is the padding factory for that.
+    def get_input_padding_for_32(self, width, height):
+        pw = ((width // 32 + 1) * 32 - width)
+        ph = ((height // 32 + 1) * 32 - height)
+        pwl = pw // 2
+        pht = ph // 2
+        pwr = pw - pwl
+        phb = ph - pht
+        pads = [pwl, pwr, pht, phb]
+        return torch.nn.ReplicationPad2d(pads), pads
 
-        i1 = x[:, :3]
-        i2 = x[:, 3:6]
+    def _forward(self, i1, i2, use_padding):
+        x = torch.cat((i1, i2), dim=1)
+
+        if not use_padding:
+            # make sure that the input can be divided by 2 as many times as needed by the pooling layers
+            # this is not padding for the image size and is removed again in the end
+            i_pad, i_pads = self.get_input_padding_for_32(x.shape[2], x.shape[3])
+            x = i_pad(x)
 
         # ------------ Contraction ------------
 
@@ -103,6 +130,7 @@ class Net(nn.Module):
         x512 = self.pool(x256)
 
         x512 = self.conv512(x512)
+        
         x = self.pool(x512)
 
         x = self.conv512x512(x)
@@ -110,6 +138,7 @@ class Net(nn.Module):
         # ------------ Expansion ------------
 
         x = self.upsamp512(x)
+
         x += x512
         x = self.upconv256(x)
 
@@ -125,8 +154,6 @@ class Net(nn.Module):
         x += x64
 
         # ------------ Final branches ------------
-
-        print("x.shape", x.shape)
 
         k2h = self.upconv51_1(x)
 
@@ -145,26 +172,62 @@ class Net(nn.Module):
 
             #cut away parts of the produced kernels that are never used anyway. Should not hurt training, since the network is fully convolutional, no training information is missed
             cut = config.OUTPUT_1D_KERNEL_SIZE // 2
-            k2h = k2h[:,:,cut:-cut,cut:-cut].contiguous()
-            k2v = k2v[:,:,cut:-cut,cut:-cut].contiguous()
-            k1h = k1h[:,:,cut:-cut,cut:-cut].contiguous()
-            k1v = k1v[:,:,cut:-cut,cut:-cut].contiguous()
+            cutl = cut + i_pads[0]
+            cutr = cut + i_pads[1]
+            cutt = cut + i_pads[2]
+            cutb = cut + i_pads[3]
+            k2h = k2h[:,:,cutl:-cutr,cutt:-cutb].contiguous()
+            k2v = k2v[:,:,cutl:-cutr,cutt:-cutb].contiguous()
+            k1h = k1h[:,:,cutl:-cutr,cutt:-cutb].contiguous()
+            k1v = k1v[:,:,cutl:-cutr,cutt:-cutb].contiguous()
 
         # ------------ Local convolutions ------------
 
-        # print(k2v.shape, k2h.shape)
-
-        # print("left black bar position", i2[0,:,25 + 105,25 + 160], "k1v", k1v[0, :, 25 + 105,25 + 160], "k1h", k1h[0, :, 25 + 105, 25 + 160])
-        
-        # print("center new black bar", i2[0,:,25 + 105,25 + 175], "k1v", k1v[0,:,25+105, 25+175], "k1h", k1h[0,:,25+105,25+175])
-
-        # print("right black bar position", i2[0,:,25 + 105,25 + 190], "k1v", k1v[0,:, 25 + 105, 25 + 190], "k1h", k1h[0, :, 25 + 105, 25 + 190])
-
         result = self.separable_conv(padded_i2, k2v, k2h) + self.separable_conv(padded_i1, k1v, k1h)
 
-        print(result.shape)
-
         return result
+
+    def forward(self, x, seq_length, use_padding):
+        workspace = [x[:, :3], x[:, 3:6]]
+
+        while len(workspace) != seq_length:
+            new_workspace = []
+            for wi in range(len(workspace)-1):
+                left = workspace[wi]
+                right = workspace[wi+1]
+
+                leftw = left.shape[2]
+                lefth = left.shape[3]
+                rightw = right.shape[2]
+                righth = right.shape[3]
+
+                smallestw = leftw if leftw < rightw else rightw
+                smallesth = lefth if lefth < righth else righth
+
+                if smallestw != leftw or smallesth != lefth:
+                    left_crop = _make_target_crop(leftw, lefth, smallestw, smallesth)
+                    left = left_crop(left)
+
+                if smallestw != rightw or smallesth != righth:
+                    right_crop = _make_target_crop(rightw, righth, smallestw, smallesth)
+                    right = right_crop(right)
+
+                middle = self._forward(left, right, use_padding)
+
+                new_workspace.append(left)
+                new_workspace.append(middle)
+                
+            new_workspace.append(workspace[-1])
+            workspace = new_workspace
+
+        result = []
+        for wi in range(len(workspace)):
+            if wi != 0 and wi != len(workspace)-1:
+                w = workspace[wi]
+                t_crop = _make_target_crop(w.shape[2], w.shape[3], config.CROP_SIZE, config.CROP_SIZE)
+                result.append(t_crop(w))
+
+        return torch.cat(result, dim=1)
 
     @staticmethod
     def _check_gradients(func):

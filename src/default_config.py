@@ -49,6 +49,9 @@ DATASET = "DAVIS"
 # != 3 is only supported for custom dataset and FORCE_HORIZONTAL = False
 SEQUENCE_LENGTH = 3
 
+# sequence length as supported by the dataset
+MAX_SEQUENCE_LENGTH = 3
+
 # number of frames between frames packed together as tuples
 CUSTOM_STRIDE = 2
 
@@ -87,6 +90,8 @@ AUGMENT_DATA: bool = True
 
 # Probability of performing the random temporal order swap of the two input frames
 RANDOM_TEMPORAL_ORDER_SWAP_PROB: float = 0.5
+
+START_FROM_EPOCH = 1
 
 # Start from pre-trained model (path)
 START_FROM_EXISTING_MODEL = None

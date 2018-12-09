@@ -29,6 +29,8 @@ def _get_padding_modules(img_height, img_width):
     padding_width = padding_width - (left + img_width + right)
     padding_height = padding_height - (top + img_height + bottom)
 
+    print([left,  (right + padding_width),  top,  (bottom + padding_height)])
+
     input_padding_module = torch.nn.ReplicationPad2d([left,  (right + padding_width),  top,  (bottom + padding_height)])
     output_padding_module = torch.nn.ReplicationPad2d([-left, -(right + padding_width), -top, -(bottom + padding_height)])
 
@@ -65,7 +67,7 @@ def interpolate_batch(model_, pil_frames):
 
     # Run forward pass
     with torch.no_grad():
-        output = model_(batch)
+        output = model_(batch, 3, True)
 
     # Apply output padding
     output = output_pad(output)
