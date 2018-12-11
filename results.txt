@@ -18,3 +18,5 @@ epoch 25  34.36 <- best result
 epoch 26  34.06
 epoch 27  33.44
 epoch 28  33.95
+
+epoch 29 with learn rate 0.00001: 34.15
