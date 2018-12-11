@@ -1,0 +1,20 @@
+47k dataset of 9-sequences
+first epoch sequence length 3,
+second epoch sequence length 5,
+then sequence length 9
+lr of 0.001 for 18 epochs, so till epoch 20
+then 8 epochs of lr 0.0001
+
+dataset 3, t=8
+
+epoch 10  28.54
+epoch 15  33.04
+epoch 20  32.55
+epoch 21  33.68
+epoch 22  34.23 <- 2n best
+epoch 23  33.80
+epoch 24  34.11
+epoch 25  34.36 <- best result
+epoch 26  34.06
+epoch 27  33.44
+epoch 28  33.95
