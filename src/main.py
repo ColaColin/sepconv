@@ -65,7 +65,7 @@ elif config.LOSS == "l1+vgg":
 else:
     raise ValueError(f"Unknown loss: {config.LOSS}")
 
-optimizer = optim.Adamax(model.parameters(), lr=0.001)
+optimizer = optim.Adamax(model.parameters(), lr=config.LEARNING_RATE)
 
 board_writer = SummaryWriter()
 

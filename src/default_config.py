@@ -101,6 +101,8 @@ LOSS: str = "l1"
 
 VGG_FACTOR: float = 1.0
 
+LEARNING_RATE = 0.001
+
 GENERATE_PARALLAX_VIEW: bool = False
 PARALLAX_VALIDATION: bool = False
 
