@@ -85,7 +85,7 @@ def train(epoch):
 
         optimizer.zero_grad()
 
-        output = model(input, config.SEQUENCE_LENGTH, False)
+        output = model(input, config.SEQUENCE_LENGTH, False, True)
 
         loss_ = loss_function(output, target)
 
@@ -175,7 +175,7 @@ def run_parallax_view_generation(save_images=True):
     cam_interval = config.PARALLAX_VIEW_CAM_INTERVAL
     parallax_output_dir = config.PARALLAX_OUTPUT_DIR
     
-    if save_images:
+    if save_images and parallax_output_dir != None:
         makedirs(parallax_output_dir, exist_ok = True)
 
     images = load_images(config.PARALLAX_DATASET_DIR)
@@ -193,7 +193,7 @@ def run_parallax_view_generation(save_images=True):
             p = psnr(pil_to_tensor(view), pil_to_tensor(images[index])).item()
             if p < worstPsnr:
                 worstPsnr = p
-        if save_images:
+        if save_images and parallax_output_dir != None:
             view.save(join_paths(parallax_output_dir, '{}.jpg'.format(index+1)), 'JPEG', quality=95)
 
     return worstPsnr

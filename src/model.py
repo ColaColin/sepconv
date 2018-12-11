@@ -187,7 +187,7 @@ class Net(nn.Module):
 
         return result
 
-    def forward(self, x, seq_length, use_padding):
+    def forward(self, x, seq_length, use_padding, crop_for_training):
         workspace = [x[:, :3], x[:, 3:6]]
 
         while len(workspace) != seq_length:
@@ -224,8 +224,12 @@ class Net(nn.Module):
         for wi in range(len(workspace)):
             if wi != 0 and wi != len(workspace)-1:
                 w = workspace[wi]
-                t_crop = _make_target_crop(w.shape[2], w.shape[3], config.CROP_SIZE, config.CROP_SIZE)
-                result.append(t_crop(w))
+                if crop_for_training:
+                    t_crop = _make_target_crop(w.shape[2], w.shape[3], config.CROP_SIZE, config.CROP_SIZE)
+                    cropped = t_crop(w)
+                    result.append(cropped)
+                else:
+                    result.append(w)
 
         return torch.cat(result, dim=1)
 
