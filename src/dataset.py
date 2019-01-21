@@ -93,9 +93,15 @@ class PatchDataset(data.Dataset):
 
         lst = self.random_temporal_order_swap(lst)
 
-        input = torch.cat((lst[0], lst[-1]), dim=0)
-        target = torch.cat(lst[1:-1], dim=0)
-
+        if config.NET_MODE == "2to1":
+            input = torch.cat((lst[0], lst[-1]), dim=0)
+            target = torch.cat(lst[1:-1], dim=0)
+        else:
+            assert len(lst) > 3, "net mode 3to2 requires sequence length of 5 or greater"
+            cut = len(lst)//2
+            input = torch.cat((lst[0], lst[cut], lst[-1]), dim=0)
+            target = torch.cat(lst[1:cut] + lst[cut+1:-1], dim=0)
+        
         return input, target
 
     def __len__(self):

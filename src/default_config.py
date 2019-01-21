@@ -60,6 +60,7 @@ CUSTOM_STRIDE = 2
 CUSTOM_FRAMESKIP = 90
 
 FLOW_THRESHOLD: float = 25
+MAX_FLOW: float = 999
 
 # rotate the patches such that the main movement, according to the optical flow, is horizontal
 FORCE_HORIZONTAL = False
@@ -101,7 +102,8 @@ LOSS: str = "l1"
 
 VGG_FACTOR: float = 1.0
 
-LEARNING_RATE = 0.001
+# Learning rate for each epoch
+LEARNING_RATE = [0.001] * EPOCHS
 
 GENERATE_PARALLAX_VIEW: bool = False
 PARALLAX_VALIDATION: bool = False
@@ -110,3 +112,7 @@ PARALLAX_VIEW_T: int = 193
 PARALLAX_VIEW_CAM_INTERVAL: int = 16
 PARALLAX_OUTPUT_DIR = "./video/icme/parallax_d3_c2/"
 PARALLAX_DATASET_DIR = "./video/icme/Development_dataset_3"
+
+NET_MODE = "2to1" # or "3to2"
+
+FLOWNET2_CS_TRAINED_WEIGHTS = "./video/FlowNet2-CS_checkpoint.pth.tar"

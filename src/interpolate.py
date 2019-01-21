@@ -76,6 +76,35 @@ def interpolate_batch(model_, pil_frames):
     output_pils = [numpy_to_pil(x) for x in output]
     return output_pils
 
+def interpolate3toN(model, left, middle, right, seq_len):
+    batch = torch.stack([torch.cat([pil_to_tensor(left), pil_to_tensor(middle), pil_to_tensor(right)], dim=0)], dim=0)
+
+    frame_channels, frame_height, frame_width = batch[0].shape
+    frame_channels /= 3
+    assert frame_channels == 3, "Only frames with 3 channels are supported"
+
+    input_pad, output_pad = _get_padding_modules(frame_height, frame_width)
+
+    if torch.cuda.is_available():
+        batch = batch.cuda()
+        input_pad = input_pad.cuda()
+        output_pad = output_pad.cuda()
+        model = model.cuda()
+
+    batch = input_pad(batch)
+
+    with torch.no_grad():
+        output = model(batch, seq_len, True, False)
+    
+
+    output = output_pad(output)
+
+    output = output.cpu().detach().numpy()
+
+    output = output.reshape(seq_len - 3, 3, frame_height, frame_width)
+
+    return [numpy_to_pil(x) for x in output]
+
 
 def interpolate(model_, frame1, frame2):
     assert frame1.size == frame2.size, "Frames must be of the same size to be interpolated"

@@ -37,23 +37,59 @@ class Net(nn.Module):
         self.upsamp = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.relu = nn.ReLU()
 
-        self.conv32 = self._conv_module(6, 32, conv_kernel, conv_stride, conv_padding, self.relu)
+        self.input_channels = 6 if "2to1" == config.NET_MODE else 9
+
+        self.conv32 = self._conv_module(self.input_channels, 32, conv_kernel, conv_stride, conv_padding, self.relu)
         self.conv64 = self._conv_module(32, 64, conv_kernel, conv_stride, conv_padding, self.relu)
         self.conv128 = self._conv_module(64, 128, conv_kernel, conv_stride, conv_padding, self.relu)
         self.conv256 = self._conv_module(128, 256, conv_kernel, conv_stride, conv_padding, self.relu)
         self.conv512 = self._conv_module(256, 512, conv_kernel, conv_stride, conv_padding, self.relu)
         self.conv512x512 = self._conv_module(512, 512, conv_kernel, conv_stride, conv_padding, self.relu)
-        self.upsamp512 = self._upsample_module(512, 512, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
-        self.upconv256 = self._conv_module(512, 256, conv_kernel, conv_stride, conv_padding, self.relu)
-        self.upsamp256 = self._upsample_module(256, 256, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
-        self.upconv128 = self._conv_module(256, 128, conv_kernel, conv_stride, conv_padding, self.relu)
-        self.upsamp128 = self._upsample_module(128, 128, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
-        self.upconv64 = self._conv_module(128, 64, conv_kernel, conv_stride, conv_padding, self.relu)
-        self.upsamp64 = self._upsample_module(64, 64, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
-        self.upconv51_1 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
-        self.upconv51_2 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
-        self.upconv51_3 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
-        self.upconv51_4 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
+
+        nHeads = 1 if "2to1" == config.NET_MODE else 2
+
+        if nHeads > 1:
+            self.upsamp512 = nn.ModuleList()
+            self.upconv256 = nn.ModuleList()
+            self.upsamp256 = nn.ModuleList()
+            self.upconv128 = nn.ModuleList()
+            self.upsamp128 = nn.ModuleList()
+            self.upconv64 = nn.ModuleList()
+            self.upsamp64 = nn.ModuleList()
+
+            self.upconv51_1 = nn.ModuleList()
+            self.upconv51_2 = nn.ModuleList()
+            self.upconv51_3 = nn.ModuleList()
+            self.upconv51_4 = nn.ModuleList()
+
+            for _ in range(nHeads):
+                self.upsamp512.append(self._upsample_module(512, 512, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu))
+                self.upconv256.append(self._conv_module(512, 256, conv_kernel, conv_stride, conv_padding, self.relu))
+                self.upsamp256.append(self._upsample_module(256, 256, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu))
+                self.upconv128.append(self._conv_module(256, 128, conv_kernel, conv_stride, conv_padding, self.relu))
+                self.upsamp128.append(self._upsample_module(128, 128, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu))
+                self.upconv64.append(self._conv_module(128, 64, conv_kernel, conv_stride, conv_padding, self.relu))
+                self.upsamp64.append(self._upsample_module(64, 64, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu))
+
+                self.upconv51_1.append(self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu))
+                self.upconv51_2.append(self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu))
+                self.upconv51_3.append(self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu))
+                self.upconv51_4.append(self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu))
+
+        else: # keep compatibility with old network structure that has nHeads == 1 and does not use lists
+            self.upsamp512 = self._upsample_module(512, 512, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
+            self.upconv256 = self._conv_module(512, 256, conv_kernel, conv_stride, conv_padding, self.relu)
+            self.upsamp256 = self._upsample_module(256, 256, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
+            self.upconv128 = self._conv_module(256, 128, conv_kernel, conv_stride, conv_padding, self.relu)
+            self.upsamp128 = self._upsample_module(128, 128, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
+            self.upconv64 = self._conv_module(128, 64, conv_kernel, conv_stride, conv_padding, self.relu)
+            self.upsamp64 = self._upsample_module(64, 64, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
+
+            self.upconv51_1 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
+            self.upconv51_2 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
+            self.upconv51_3 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
+            self.upconv51_4 = self._kernel_module(64, sep_kernel, conv_kernel, conv_stride, conv_padding, self.upsamp, self.relu)
+
 
         self.pad = nn.ReplicationPad2d(sep_kernel // 2)
 
@@ -106,9 +142,109 @@ class Net(nn.Module):
         pads = [pwl, pwr, pht, phb]
         return torch.nn.ReplicationPad2d(pads), pads
 
-    def _forward(self, i1, i2, use_padding):
-        x = torch.cat((i1, i2), dim=1)
+    def _handle_paddings(self, use_padding, i1, i2):
+        if use_padding:
+            padded_i2 = self.pad(i2)
+            padded_i1 = self.pad(i1)
+        else:
+            padded_i1 = i1.contiguous()
+            padded_i2 = i2.contiguous()
 
+        return padded_i1, padded_i2
+
+    def _handle_no_pad_cut_kernels(self, i_pads, k1h, k1v, k2h, k2v):
+        #cut away parts of the produced kernels that are never used anyway. Should not hurt training, since the network is fully convolutional, no training information is missed
+        cut = config.OUTPUT_1D_KERNEL_SIZE // 2
+        cutl = cut + i_pads[0]
+        cutr = cut + i_pads[1]
+        cutt = cut + i_pads[2]
+        cutb = cut + i_pads[3]
+        k2h = k2h[:,:,cutl:-cutr,cutt:-cutb].contiguous()
+        k2v = k2v[:,:,cutl:-cutr,cutt:-cutb].contiguous()
+        k1h = k1h[:,:,cutl:-cutr,cutt:-cutb].contiguous()
+        k1v = k1v[:,:,cutl:-cutr,cutt:-cutb].contiguous()
+        return k1h, k1v, k2h, k2v
+
+    def _make_image_result_from_central_x(self, i1, i2, x, x64, x128, x256, x512, use_padding, i_pads, head_index):
+        if  "2to1" == config.NET_MODE:
+            x = self.upsamp512(x)
+
+            x += x512
+            x = self.upconv256(x)
+
+            x = self.upsamp256(x)
+            x += x256
+            x = self.upconv128(x)
+
+            x = self.upsamp128(x)
+            x += x128
+            x = self.upconv64(x)
+
+            x = self.upsamp64(x)
+            x += x64
+
+            # ------------ Final branches ------------
+
+            k2h = self.upconv51_1(x)
+
+            k2v = self.upconv51_2(x)
+
+            k1h = self.upconv51_3(x)
+
+            k1v = self.upconv51_4(x)
+
+            padded_i1, padded_i2 = self._handle_paddings(use_padding, i1, i2)
+
+            if not use_padding:
+                k1h, k1v, k2h, k2v = self._handle_no_pad_cut_kernels(i_pads, k1h, k1v, k2h, k2v)
+
+            # ------------ Local convolutions ------------
+
+            result = self.separable_conv(padded_i2, k2v, k2h) + self.separable_conv(padded_i1, k1v, k1h)
+        else:
+            # ------------ Expansion ------------
+
+            x = self.upsamp512[head_index](x)
+
+            x += x512
+            x = self.upconv256[head_index](x)
+
+            x = self.upsamp256[head_index](x)
+            x += x256
+            x = self.upconv128[head_index](x)
+
+            x = self.upsamp128[head_index](x)
+            x += x128
+            x = self.upconv64[head_index](x)
+
+            x = self.upsamp64[head_index](x)
+            x += x64
+
+            # ------------ Final branches ------------
+
+            k2h = self.upconv51_1[head_index](x)
+
+            k2v = self.upconv51_2[head_index](x)
+
+            k1h = self.upconv51_3[head_index](x)
+
+            k1v = self.upconv51_4[head_index](x)
+
+            padded_i1, padded_i2 = self._handle_paddings(use_padding, i1, i2)
+
+            if not use_padding:
+                k1h, k1v, k2h, k2v = self._handle_no_pad_cut_kernels(i_pads, k1h, k1v, k2h, k2v)
+
+            # ------------ Local convolutions ------------
+
+            result = self.separable_conv(padded_i2, k2v, k2h) + self.separable_conv(padded_i1, k1v, k1h)
+
+        return result
+
+    def _forward(self, inputs, use_padding):
+        x = torch.cat(inputs, dim=1)
+
+        i_pads = None
         if not use_padding:
             # make sure that the input can be divided by 2 as many times as needed by the pooling layers
             # this is not padding for the image size and is removed again in the end
@@ -135,94 +271,59 @@ class Net(nn.Module):
 
         x = self.conv512x512(x)
 
-        # ------------ Expansion ------------
-
-        x = self.upsamp512(x)
-
-        x += x512
-        x = self.upconv256(x)
-
-        x = self.upsamp256(x)
-        x += x256
-        x = self.upconv128(x)
-
-        x = self.upsamp128(x)
-        x += x128
-        x = self.upconv64(x)
-
-        x = self.upsamp64(x)
-        x += x64
-
-        # ------------ Final branches ------------
-
-        k2h = self.upconv51_1(x)
-
-        k2v = self.upconv51_2(x)
-
-        k1h = self.upconv51_3(x)
-
-        k1v = self.upconv51_4(x)
-
-        if use_padding:
-            padded_i2 = self.pad(i2)
-            padded_i1 = self.pad(i1)
+        if config.NET_MODE == "2to1":
+            return [self._make_image_result_from_central_x(inputs[0], inputs[1], x, x64, x128, x256, x512, use_padding, i_pads, 0)]
         else:
-            padded_i1 = i1.contiguous()
-            padded_i2 = i2.contiguous()
-
-            #cut away parts of the produced kernels that are never used anyway. Should not hurt training, since the network is fully convolutional, no training information is missed
-            cut = config.OUTPUT_1D_KERNEL_SIZE // 2
-            cutl = cut + i_pads[0]
-            cutr = cut + i_pads[1]
-            cutt = cut + i_pads[2]
-            cutb = cut + i_pads[3]
-            k2h = k2h[:,:,cutl:-cutr,cutt:-cutb].contiguous()
-            k2v = k2v[:,:,cutl:-cutr,cutt:-cutb].contiguous()
-            k1h = k1h[:,:,cutl:-cutr,cutt:-cutb].contiguous()
-            k1v = k1v[:,:,cutl:-cutr,cutt:-cutb].contiguous()
-
-        # ------------ Local convolutions ------------
-
-        result = self.separable_conv(padded_i2, k2v, k2h) + self.separable_conv(padded_i1, k1v, k1h)
-
-        return result
+            out1 = self._make_image_result_from_central_x(inputs[0], inputs[1], x, x64, x128, x256, x512, use_padding, i_pads, 0)
+            out2 = self._make_image_result_from_central_x(inputs[1], inputs[2], x, x64, x128, x256, x512, use_padding, i_pads, 1)
+            return [out1, out2]
 
     def forward(self, x, seq_length, use_padding, crop_for_training):
-        workspace = [x[:, :3], x[:, 3:6]]
+        if (config.NET_MODE == "2to1"):
+            workspace = [x[:, :3], x[:, 3:6]]
+            takeN = 2
+        else:
+            workspace = [x[:, :3], x[:, 3:6], x[:, 6:9]]
+            takeN = 3
 
-        while len(workspace) != seq_length:
+        putN = takeN - 1
+
+        while len(workspace) < seq_length:
             new_workspace = []
-            for wi in range(len(workspace)-1):
-                left = workspace[wi]
-                right = workspace[wi+1]
-
-                leftw = left.shape[2]
-                lefth = left.shape[3]
-                rightw = right.shape[2]
-                righth = right.shape[3]
-
-                smallestw = leftw if leftw < rightw else rightw
-                smallesth = lefth if lefth < righth else righth
-
-                if smallestw != leftw or smallesth != lefth:
-                    left_crop = _make_target_crop(leftw, lefth, smallestw, smallesth)
-                    left = left_crop(left)
-
-                if smallestw != rightw or smallesth != righth:
-                    right_crop = _make_target_crop(rightw, righth, smallestw, smallesth)
-                    right = right_crop(right)
-
-                middle = self._forward(left, right, use_padding)
-
-                new_workspace.append(left)
-                new_workspace.append(middle)
+            for wi in range(0, len(workspace) - putN, putN):
+                inputs = []
+                for ir in range(takeN):
+                    inputs.append(workspace[wi+ir])
                 
+                smallestw = inputs[0].shape[2]
+                for inp in inputs:
+                    if smallestw > inp.shape[2]:
+                        smallestw = inp.shape[2]
+
+                smallesth = inputs[1].shape[3]
+                for inp in inputs:
+                    if smallesth > inp.shape[3]:
+                        smallesth = inp.shape[3]
+
+                for idx in range(takeN):
+                    inp = inputs[idx]
+                    i_crop = _make_target_crop(inp.shape[2], inp.shape[3], smallestw, smallesth)
+                    inputs[idx] = i_crop(inp)
+
+                outputs = self._forward(inputs, use_padding)
+
+                ix = 0
+                for o in outputs:
+                    new_workspace.append(inputs[ix])
+                    new_workspace.append(o)
+                    ix += 1
+
             new_workspace.append(workspace[-1])
             workspace = new_workspace
 
         result = []
         for wi in range(len(workspace)):
-            if wi != 0 and wi != len(workspace)-1:
+            if (wi != 0 and wi != len(workspace)-1 and (config.NET_MODE == "2to1" or wi != len(workspace) // 2)):
                 w = workspace[wi]
                 if crop_for_training:
                     t_crop = _make_target_crop(w.shape[2], w.shape[3], config.CROP_SIZE, config.CROP_SIZE)

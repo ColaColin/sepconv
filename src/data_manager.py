@@ -17,6 +17,11 @@ from os import makedirs, remove, listdir, rmdir, rename
 from six.moves import urllib
 from PIL import Image
 
+import time
+
+import torch
+from .flownet2.models import FlowNet2CS
+
 import src.config as config
 
 
@@ -443,6 +448,268 @@ def is_single_direction(flow, check_vectors_magnitude_ratio = 0.8, check_vectors
 
     return (fail_ratio < check_vectors_max_error_ratio, avg_direction)
 
+# for debugging usage, have a look at generated flows
+def writeFlowImage(flowArray, filePath):
+    flow = flowArray
+
+    # Use Hue, Saturation, Value colour model 
+    hsv = np.zeros(flow.shape[:2] + (3,), dtype=np.uint8)
+    hsv[..., 1] = 255
+
+    mag, ang = cv.cartToPolar(flow[..., 0], flow[..., 1])
+    hsv[..., 0] = ang * 180 / np.pi / 2
+    hsv[..., 2] = cv.normalize(mag, None, 0, 255, cv.NORM_MINMAX)
+    rgb = cv.cvtColor(hsv, cv.COLOR_HSV2RGB)
+
+    img = Image.fromarray(rgb, mode='RGB')
+    img.save(filePath, 'JPEG', quality=95)
+
+def getPadFlowNet2InputBatch(frameWidth, frameHeight):
+    reqDivisibility = 64
+
+    paddedWidth = frameWidth
+    paddedHeight = frameHeight
+
+    if paddedWidth % reqDivisibility != 0:
+        paddedWidth = (paddedWidth // reqDivisibility + 1) * reqDivisibility
+
+    if paddedHeight % reqDivisibility != 0:
+        paddedHeight = (paddedHeight // reqDivisibility + 1) * reqDivisibility
+
+    wPad = paddedWidth - frameWidth
+    hPad = paddedHeight - frameHeight
+
+    left = wPad // 2
+    right = wPad - left
+
+    top = hPad // 2
+    bottom = hPad - top
+
+    inputPad = torch.nn.ReplicationPad2d([left, right, top, bottom])
+    outputPad = torch.nn.ReplicationPad2d([-left, -right, -top, -bottom])
+
+    return inputPad, outputPad
+
+class AttributeHolder(object):
+    pass
+
+flowNet2 = None
+
+# call this once before starting to use flownet2 to init global flownet2 instance
+def initFlowNet2():
+    global flowNet2
+
+    print("===> Init Flownet2...")
+
+    args = AttributeHolder()
+    args.rgb_max = 255
+    args.fp16 = False
+
+    flowNet2 = FlowNet2CS(args).cuda()
+    netState = torch.load(config.FLOWNET2_CS_TRAINED_WEIGHTS)
+    flowNet2.load_state_dict(netState["state_dict"])
+    
+    print("===> Flownet 2 initialized")
+
+# call after flowNet2 usage
+def freeFlowNet2():
+    global flowNet2
+    del flowNet2
+    flowNet2 = None
+    torch.cuda.empty_cache()
+
+def callFlowNet2(numpyInputBatch):
+    global flowNet2
+
+    im = torch.from_numpy(numpyInputBatch).cuda()
+
+    with torch.no_grad():
+        # pad inputs to image size that is a multiple of 64 for the network
+        inPad, outPad = getPadFlowNet2InputBatch(im.shape[4], im.shape[3])
+        inPad = inPad.cuda()
+        outPad = outPad.cuda()
+        bDims = im.shape
+        im = inPad(im.reshape(bDims[0], bDims[1] * bDims[2], bDims[3], bDims[4]))
+        im = im.reshape(bDims[0], bDims[1], bDims[2], im.shape[2], im.shape[3])
+
+        #process the image pair to obtain the flow
+        netOut = flowNet2(im)
+
+        #remove any padding applied before the input
+        result = outPad(netOut)
+
+    return result.data.cpu().numpy()
+
+def to_numpy(x):
+    return np.array(x)
+
+def _extract_custom_patches_worker_flownet(tuples, flow_threshold, jumpcut_threshold, force_horizontal):
+    assert not config.FORCE_HORIZONTAL, "flow horizontal is not supported with flownet dataset creation, TODO: maybe change that"
+
+    patch_h, patch_w = config.PATCH_SIZE
+
+    assert(patch_h == patch_w)
+
+    patch_diagonal = int(((patch_w ** 2 + patch_h ** 2) ** 0.5)+1)
+
+    patches = []
+
+    jumpcuts = 0
+    flowfiltered = 0
+    directionfiltered = 0
+
+    total_count = 0
+
+    lastProcTimes = []
+
+    # processing tuples:
+    # for each tuple collect candidate patch indices
+    #   -> that do not contain jump cuts
+    # then push the candidate patches (on default settings it will be 3 sequences of 9 patches, handle these as one batch) through flownet2.
+    # flownet2 input has this shape: [BATCH_INDEX, RGB_CHANNELS=3, IMAGE_PAIR=2, HEIGHT, WIDTH]
+    # flownet2 output has the shape: [BATCH_INDEX, VECTOR_AXIS=2, HEIGHT, WIDTH]
+
+    for tup_index in range(len(tuples)):
+        procStart = time.time()
+
+        tup = tuples[tup_index]
+
+        imgs = [load_img(x) for x in tup]
+
+        img_w, img_h = imgs[0].size
+
+        imgs = [to_numpy(x) for x in imgs]
+
+        patch_num_w = int(img_w / patch_diagonal)
+        patch_num_h = int(img_h / patch_diagonal)
+
+        right_space = (img_w - patch_num_w * patch_diagonal) // 2
+        top_space = (img_h - patch_num_h * patch_diagonal) // 2
+
+        # contains lists: [i, j, candidate_seq_list_of_patch_images]
+        # if too many of the optical flows are determined to be too small the sequence is not used
+        candidatePatches = []
+
+        for pw in range(patch_num_w):
+            for ph in range(patch_num_h):
+                
+                total_count += 1
+
+                i = top_space + ph * patch_diagonal
+                j = right_space + pw * patch_diagonal
+
+                candidate_seq = [x[i:i+patch_diagonal, j:j+patch_diagonal] for x in imgs]
+
+                skip = False
+
+                for pair_idx in range(1, len(imgs)):
+                    if is_jumpcut(candidate_seq[pair_idx-1], candidate_seq[pair_idx], jumpcut_threshold):
+                        jumpcuts += 1
+                        skip = True
+                        break
+
+                if skip:
+                    continue # next candidate position
+
+                candidatePatches.append([i, j, candidate_seq])
+
+        if len(candidatePatches) == 0:
+            continue # next tuple
+
+        # use flownet2 to find flows of the relevant patches
+        netInputData = np.zeros((len(candidatePatches) * (len(imgs)-2), 3, 2, patch_diagonal, patch_diagonal), dtype=np.float32)
+        bIndex = 0
+        for candidate in candidatePatches:
+            candidate_seq = candidate[2]
+            for pair_idx in range(2, len(imgs)):
+                img1 = candidate_seq[pair_idx - 2]
+                img2 = candidate_seq[pair_idx]
+                imagePair = [img1, img2]
+                imagePair = np.array(imagePair)
+                imagePair = imagePair.transpose(3, 0, 1, 2)
+                netInputData[bIndex] = imagePair
+
+                bIndex += 1
+
+        netOutputData = callFlowNet2(netInputData)
+
+        bIndex = 0
+
+        # set to a directory to output image patches and flow visualization of the patches to verify everything works as expected
+        dbgOutputDir = None 
+
+        for candidate in candidatePatches:
+            candidate_seq = candidate[2]
+
+            flow_fails = 0
+
+            for pair_idx in range(2, len(imgs)):
+                flowByNetwork = netOutputData[bIndex].transpose(1, 2, 0)
+
+                # nan handling is from simple flow stuff. Probably not even required, why would a neural net output NaNs anyway?
+                # but better safe than sorry
+                n = np.sum(1 - np.isnan(flowByNetwork), axis=(0,1))
+                flowByNetwork[np.isnan(flowByNetwork)] = 0
+                flow_magnitude = np.linalg.norm(flowByNetwork.sum(axis=(0,1)) / n)
+
+                bIndex += 1
+
+                if random.random() > flow_magnitude / flow_threshold:
+                    flow_fails += 1
+
+                if flow_magnitude > config.MAX_FLOW:
+                    flow_fails += len(imgs) # block it out completely!
+                    # do NOT break to not screw up bIndex counting
+
+                if dbgOutputDir is not None and flow_magnitude < config.MAX_FLOW and flow_magnitude > config.FLOW_THRESHOLD:
+                    iLeft = candidate_seq[pair_idx - 2]
+                    iRight = candidate_seq[pair_idx]
+
+                    print(tup_index, bIndex, flow_magnitude)
+                    nameBase = str(tup_index) + "_" + str(bIndex) + "_"
+                    leftName = nameBase + "1left.jpg"
+                    rightName = nameBase + "2right.jpg"
+                    flowName = nameBase + "3flow.jpg"
+
+                    writeFlowImage(flowByNetwork, join(dbgOutputDir, flowName))
+                    Image.fromarray(iLeft, mode='RGB').save(join(dbgOutputDir, leftName), 'JPEG')
+                    Image.fromarray(iRight, mode='RGB').save(join(dbgOutputDir, rightName), 'JPEG')
+            
+            if flow_fails >= len(imgs) // 3:
+                flowfiltered += 1
+            else:
+                patches.append({
+                    "frames": tup,
+                    "patch_i": candidate[0],
+                    "patch_j": candidate[1],
+                    "patch_diagonal": patch_diagonal,
+                    "rotation": 0,
+                    "custom": True
+                })
+
+        procTime = time.time() - procStart
+        
+        lastProcTimes.append(procTime)
+        if len(lastProcTimes) > 250:
+            del lastProcTimes[0]
+
+        timePerTupleAvg = np.mean(lastProcTimes)
+        tuplesPerSec = 1.0 / timePerTupleAvg
+        remTuples = len(tuples) - tup_index - 1
+        remSecs = remTuples / tuplesPerSec
+        remMins = remSecs // 60 + 1
+        remHours = int(remMins // 60)
+        remMins = int(remMins % 60)
+
+        print(f"Worker starting at frame {basename(tuples[0][0])} is {100.0 * tup_index / len(tuples)} % complete with {len(patches)} interessting patches found. {tuplesPerSec:.2f} tuples per second. ETA {remHours} hours, {remMins} minutes")
+
+    print('===> Processed {} tuples, {} patches extracted, {} discarded as jumpcuts, {} filtered by flow, {} filtered by direction'.format(
+        len(tuples), len(patches), 100.0 * jumpcuts / total_count, 100.0 * flowfiltered / total_count, 100.0 * directionfiltered / total_count
+    ))
+
+    return patches
+
+# not used, used instead is the flownet2 version, which is ~50x faster.
 def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, force_horizontal):
     assert config.MAX_SEQUENCE_LENGTH == 3 or not config.FORCE_HORIZONTAL, "using a sequence length of above 3 with force horizontal is not implemented to work correctly"
 
@@ -452,6 +719,7 @@ def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, fo
 
     patch_diagonal = int(((patch_w ** 2 + patch_h ** 2) ** 0.5)+1)
 
+    # this turns the image into a BGR image.
     pil_to_numpy = lambda x: np.array(x)[:, :, ::-1]
 
     patches = []
@@ -461,7 +729,11 @@ def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, fo
     directionfiltered = 0
     total_count = 0
 
+    lastProcTimes = []
+
     for tup_index in range(len(tuples)):
+        procStart = time.time()
+
         tup = tuples[tup_index]
 
         imgs = [load_img(x) for x in tup]
@@ -478,7 +750,7 @@ def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, fo
         for pw in range(patch_num_w):
             for ph in range(patch_num_h):
 
-                # don't process all parts of all frames, increase variation accross more scenes
+                # don't process all parts of all frames, increase variation accross more scenes... also save some cpu time. Not needed when using flownet
                 if random.random() > 0.7:
                     continue
 
@@ -547,7 +819,21 @@ def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, fo
                     "custom": True
                 })
 
-        print(f"Worker starting at frame {basename(tuples[0][0])} is {100.0 * tup_index / len(tuples)} % complete with {len(patches)} interessting patches found")
+        procTime = time.time() - procStart
+
+        lastProcTimes.append(procTime)
+        if len(lastProcTimes) > 250:
+            del lastProcTimes[0]
+
+        timePerTupleAvg = np.mean(lastProcTimes)
+        tuplesPerSec = 1.0 / timePerTupleAvg
+        remTuples = len(tuples) - tup_index - 1
+        remSecs = remTuples / tuplesPerSec
+        remMins = remSecs // 60 + 1
+        remHours = int(remMins // 60)
+        remMins = int(remMins % 60)
+
+        print(f"Worker starting at frame {basename(tuples[0][0])} is {100.0 * tup_index / len(tuples)} % complete with {len(patches)} interessting patches found. {tuplesPerSec:.2f} tuples per second. ETA {remHours} hours, {remMins} minutes")
 
     print('===> Processed {} tuples, {} patches extracted, {} discarded as jumpcuts, {} filtered by flow, {} filtered by direction'.format(
         len(tuples), len(patches), 100.0 * jumpcuts / total_count, 100.0 * flowfiltered / total_count, 100.0 * directionfiltered / total_count
@@ -584,17 +870,24 @@ def _extract_patches(tuples, max_per_frame=1, trials_per_tuple=100, flow_thresho
 
 def _extract_custom_patches(tuples, flow_threshold, jumpcut_threshold, force_horizontal, workers):
     tick_t = timer()
-    print("===> Extracing custom patches...")
 
-    if workers != 0:
-        parallel = Parallel(n_jobs=workers, backend="threading", verbose=5)
-        tuples_per_job = len(tuples) // workers + 1
-        result = parallel(delayed(_extract_custom_patches_worker)(tuples[i:i+tuples_per_job], flow_threshold,
-                                jumpcut_threshold, force_horizontal) for i in range(0, len(tuples), tuples_per_job))
-        patches = sum(result, [])
-    else:
-        patches = _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, force_horizontal)
+    initFlowNet2()
+
+    print("===> Extracting custom patches...")
+
+    # if workers != 0:
+    #     parallel = Parallel(n_jobs=workers, backend="threading", verbose=5)
+    #     tuples_per_job = len(tuples) // workers + 1
+    #     result = parallel(delayed(_extract_custom_patches_worker_flownet)(tuples[i:i+tuples_per_job], flow_threshold,
+    #                             jumpcut_threshold, force_horizontal) for i in range(0, len(tuples), tuples_per_job))
+    #     patches = sum(result, [])
+    # else:
+
+    # flownet processing is gpu limited anyway
+    patches = _extract_custom_patches_worker_flownet(tuples, flow_threshold, jumpcut_threshold, force_horizontal)
     
+    freeFlowNet2()
+
     tock_t = timer()
     print("Done. Took ~{}s".format(round(tock_t - tick_t)))
 

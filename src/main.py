@@ -8,15 +8,17 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 from tensorboardX import SummaryWriter
 from os.path import exists, join as join_paths
-from os import makedirs, link, remove
+from os import makedirs, link, remove, listdir
 from timeit import default_timer as timer
 import src.config as config
 from src import loss
 from src.data_manager import load_img, load_images
 from src.model import Net, _make_target_crop
 from src.dataset import get_training_set, get_validation_set, get_visual_test_set, pil_to_tensor
-from src.interpolate import interpolate
+from src.interpolate import interpolate, interpolate3toN
 from src.utilities import psnr
+
+import json
 
 # ----------------------------------------------------------------------
 
@@ -37,22 +39,32 @@ if config.SEED is not None:
 
 if not config.GENERATE_PARALLAX_VIEW:
     print('===> Loading datasets...')
+    
     train_set = get_training_set()
-    validation_set = get_validation_set()
-    visual_test_set = get_visual_test_set()
     training_data_loader = DataLoader(dataset=train_set, num_workers=config.NUM_WORKERS, batch_size=config.BATCH_SIZE,
                                     shuffle=True)
-    validation_data_loader = DataLoader(dataset=validation_set, num_workers=config.NUM_WORKERS,
+
+    if config.VISUAL_TEST_ENABLED: #visual test. I never used this in the parallax generation experiments
+        visual_test_set = get_visual_test_set()
+
+    if config.VALIDATION_ENABLED: #davis dataset validation, not parallax view dataset validation
+        validation_set = get_validation_set()
+        validation_data_loader = DataLoader(dataset=validation_set, num_workers=config.NUM_WORKERS,
                                     batch_size=config.BATCH_SIZE, shuffle=False)
 
-if config.START_FROM_EXISTING_MODEL is not None:
-    print(f'===> Loading pre-trained model: {config.START_FROM_EXISTING_MODEL}')
-    model = Net.from_file(config.START_FROM_EXISTING_MODEL)
-else:
-    print('===> Building model...')
-    model = Net()
+def init_model(file=None, quiet=False):
+    if file is not None:
+        if not quiet:
+            print(f'===> Loading pre-trained model: {file}')
+        model = Net.from_file(file)
+    else:
+        if not quiet:
+            print('===> Building model...')
+        model = Net()
+    model.to(device)
+    return model
 
-model.to(device)
+model = init_model(config.START_FROM_EXISTING_MODEL)
 
 if config.LOSS == "l1":
     loss_function = nn.L1Loss()
@@ -65,7 +77,7 @@ elif config.LOSS == "l1+vgg":
 else:
     raise ValueError(f"Unknown loss: {config.LOSS}")
 
-optimizer = optim.Adamax(model.parameters(), lr=config.LEARNING_RATE)
+optimizer = optim.Adamax(model.parameters(), lr=config.LEARNING_RATE[0])
 
 board_writer = SummaryWriter()
 
@@ -77,6 +89,15 @@ def train(epoch):
     epoch_loss = 0
 
     target_crop = _make_target_crop(config.PATCH_SIZE[0], config.PATCH_SIZE[1], config.CROP_SIZE, config.CROP_SIZE)
+
+    epoch_lr = config.LEARNING_RATE[-1]
+    if epoch < len(config.LEARNING_RATE):
+        epoch_lr = config.LEARNING_RATE[epoch]
+
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = epoch_lr
+
+    print(f"Epoch {epoch} uses learning rate of {epoch_lr}")
 
     for iteration, batch in enumerate(training_data_loader, 1):
         input, target = batch[0].to(device), batch[1].to(device)
@@ -155,20 +176,36 @@ def generate_parallax_view(t, cam_interval, cam_views):
     cam_views is expected to be an array of pil images
     returns an array of pil images
     """
-    output = []
-    for w in range(1, t+1):
-        if (w - 1) % cam_interval == 0:
-            output.append(cam_views[(w-1) // cam_interval])
-        else:
-            output.append(None)
-    
-    while cam_interval > 1:
-        r_dot = cam_interval // 2
-        for w in range(1, t - cam_interval + 1, cam_interval):
-            output[w + r_dot - 1] = interpolate(model, output[w - 1], output[w + cam_interval - 1])
-        cam_interval = r_dot
 
-    return output
+    if config.NET_MODE == "2to1":
+        output = []
+        for w in range(1, t+1):
+            if (w - 1) % cam_interval == 0:
+                output.append(cam_views[(w-1) // cam_interval])
+            else:
+                output.append(None)
+        
+        while cam_interval > 1:
+            r_dot = cam_interval // 2
+            for w in range(1, t - cam_interval + 1, cam_interval):
+                output[w + r_dot - 1] = interpolate(model, output[w - 1], output[w + cam_interval - 1])
+            cam_interval = r_dot
+
+        return output
+    else:
+        result = []
+        seq_len = cam_interval * 2 + 1
+
+        for iv in range(0, len(cam_views)-2, 2):
+            result.append(cam_views[iv])
+            interpolations = interpolate3toN(model, cam_views[iv], cam_views[iv+1], cam_views[iv+2], seq_len)
+            for idx, interpolation in enumerate(interpolations):
+                result.append(interpolation)
+                if idx == cam_interval - 2:
+                    result.append(cam_views[iv+1])
+        result.append(cam_views[-1])
+        return result
+
 
 def run_parallax_view_generation(save_images=True):
     t = config.PARALLAX_VIEW_T
@@ -188,13 +225,19 @@ def run_parallax_view_generation(save_images=True):
 
     worstPsnr = 999999999
 
+    resultsDict = {}
+
     for index, view in enumerate(parallax_view):
+        p = 0
         if index % cam_interval != 0:
             p = psnr(pil_to_tensor(view), pil_to_tensor(images[index])).item()
             if p < worstPsnr:
                 worstPsnr = p
+        resultsDict[index] = p
+
         if save_images and parallax_output_dir != None:
             view.save(join_paths(parallax_output_dir, '{}.jpg'.format(index+1)), 'JPEG', quality=95)
+            print(json.dumps(resultsDict))
 
     return worstPsnr
 
@@ -212,7 +255,14 @@ def visual_test(epoch):
 tick_t = timer()
 
 if config.GENERATE_PARALLAX_VIEW:
-    print("PSNR is ", run_parallax_view_generation())
+    if config.EVALUATION_DIR is not None:
+        print(f"Evaluating models in {config.EVALUATION_DIR}")
+        model_files = [join_paths(config.EVALUATION_DIR, x) for x in listdir(config.EVALUATION_DIR)]
+        for m in model_files:
+            model = init_model(m, quiet=True)
+            print(f"PSNR of {m} is {run_parallax_view_generation(save_images=False)}")
+    else:
+        print("PSNR is ", run_parallax_view_generation())
 else:
     for epoch in range(config.START_FROM_EPOCH, config.EPOCHS + 1):
         train(epoch)

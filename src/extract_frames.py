@@ -9,14 +9,20 @@ from os.path import join
 from timeit import default_timer as timer
 from PIL import Image
 
+import scipy.misc
 
 def extract_frames(video_path, handler):
 
     def convert_frame(arg):
-        return Image.fromarray(arg[:, :, :3], mode='RGB')
+        iarray = arg[:,:,:3]
+        iarray = scipy.misc.imresize(iarray, (720, 1280, 3), interp='bicubic')
+        return Image.fromarray(iarray, mode='RGB')
 
+    print("Extracting frames from %s" % video_path)
     video_reader = imageio.get_reader(video_path)
     fps = video_reader.get_meta_data().get('fps', None)
+
+    print("The video has " + str(fps) + " FPS")
 
     idx = 0
     for x in video_reader:

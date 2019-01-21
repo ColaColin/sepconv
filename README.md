@@ -49,6 +49,12 @@ sudo apt-get install nvidia-cuda-toolkit
 sudo pip3 install -r ./path/to/requirements.txt
 ```
 
+### Setup Flownet2, the code in flownet2-pytorch is https://github.com/NVIDIA/flownet2-pytorch/tree/python36-PyTorch0.4 up to commit 3d6db9f08c0c5891b65fffcbb56b0e8569e2696f
+
+```
+follow instructions by flownet2 readme
+```
+
 -------
 ## How to setup the project and train the network:
 
