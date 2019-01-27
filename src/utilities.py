@@ -6,6 +6,12 @@ import torch
 import numpy as np
 import cv2 as cv
 
+import json
+
+def openJson(path):
+    with open(path) as f:
+        parsed = json.load(f)
+    return parsed
 
 def pil_to_cv(pil_image):
     """
