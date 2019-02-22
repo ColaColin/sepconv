@@ -25,7 +25,7 @@ def _make_target_crop(width, height, target_w, target_h):
 
 class Net(nn.Module):
 
-    def __init__(self, init_weights=True):
+    def __init__(self, netMode, init_weights=True):
         super(Net, self).__init__()
 
         conv_kernel = (3, 3)
@@ -37,7 +37,9 @@ class Net(nn.Module):
         self.upsamp = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
         self.relu = nn.ReLU()
 
-        self.input_channels = 6 if "2to1" == config.NET_MODE else 9
+        self.netMode = netMode
+
+        self.input_channels = 6 if "2to1" == self.netMode else 9
 
         self.conv32 = self._conv_module(self.input_channels, 32, conv_kernel, conv_stride, conv_padding, self.relu)
         self.conv64 = self._conv_module(32, 64, conv_kernel, conv_stride, conv_padding, self.relu)
@@ -46,7 +48,8 @@ class Net(nn.Module):
         self.conv512 = self._conv_module(256, 512, conv_kernel, conv_stride, conv_padding, self.relu)
         self.conv512x512 = self._conv_module(512, 512, conv_kernel, conv_stride, conv_padding, self.relu)
 
-        nHeads = 1 if "2to1" == config.NET_MODE else 2
+        # only two options are supported: 2to1 or 3to2, which is used for any other string value than 2to1
+        nHeads = 1 if "2to1" == self.netMode else 2
 
         if nHeads > 1:
             self.upsamp512 = nn.ModuleList()
@@ -103,13 +106,13 @@ class Net(nn.Module):
             self.apply(self._weight_init)
 
     @staticmethod
-    def from_file(file_path: str) -> nn.Module :
+    def from_file(file_path: str, netMode: str) -> nn.Module :
         """
         Initializes a new Net object from an existing model
         :param file_path: path to the model.pth file
         :return: Net object
         """
-        model = Net(init_weights=False)
+        model = Net(netMode, init_weights=False)
         state_dict = torch.load(file_path)
         model.load_state_dict(state_dict)
         return model
@@ -166,7 +169,7 @@ class Net(nn.Module):
         return k1h, k1v, k2h, k2v
 
     def _make_image_result_from_central_x(self, i1, i2, x, x64, x128, x256, x512, use_padding, i_pads, head_index):
-        if  "2to1" == config.NET_MODE:
+        if  "2to1" == self.netMode:
             x = self.upsamp512(x)
 
             x += x512
@@ -271,7 +274,7 @@ class Net(nn.Module):
 
         x = self.conv512x512(x)
 
-        if config.NET_MODE == "2to1":
+        if self.netMode == "2to1":
             return [self._make_image_result_from_central_x(inputs[0], inputs[1], x, x64, x128, x256, x512, use_padding, i_pads, 0)]
         else:
             out1 = self._make_image_result_from_central_x(inputs[0], inputs[1], x, x64, x128, x256, x512, use_padding, i_pads, 0)
@@ -279,15 +282,18 @@ class Net(nn.Module):
             return [out1, out2]
 
     def forward(self, x, seq_length, use_padding, crop_for_training):
-        if (config.NET_MODE == "2to1"):
+        if (self.netMode == "2to1"):
+            # 2to1 uses the 6 input layers, 3 for each image, RGB
             workspace = [x[:, :3], x[:, 3:6]]
             takeN = 2
         else:
+            # 3to2 uses 9 input layers, one extra image compared to 2to1
             workspace = [x[:, :3], x[:, 3:6], x[:, 6:9]]
             takeN = 3
 
         putN = takeN - 1
 
+        # apply the network until enough output images were generated
         while len(workspace) < seq_length:
             new_workspace = []
             for wi in range(0, len(workspace) - putN, putN):
@@ -295,6 +301,7 @@ class Net(nn.Module):
                 for ir in range(takeN):
                     inputs.append(workspace[wi+ir])
                 
+                # determine the size of the smallest image generated, which will be used as a smallest common denominator for the next forward pass through the network
                 smallestw = inputs[0].shape[2]
                 for inp in inputs:
                     if smallestw > inp.shape[2]:
@@ -323,7 +330,7 @@ class Net(nn.Module):
 
         result = []
         for wi in range(len(workspace)):
-            if (wi != 0 and wi != len(workspace)-1 and (config.NET_MODE == "2to1" or wi != len(workspace) // 2)):
+            if (wi != 0 and wi != len(workspace)-1 and (self.netMode == "2to1" or wi != len(workspace) // 2)):
                 w = workspace[wi]
                 if crop_for_training:
                     t_crop = _make_target_crop(w.shape[2], w.shape[3], config.CROP_SIZE, config.CROP_SIZE)

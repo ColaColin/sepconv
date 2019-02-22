@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 import numpy as np
 
-from src.utilities import openJson
+from src.utilities import openJson, writeTxt
 
 def createDiagram(name, psnrFile, targetFile):
     psnrDict = openJson(psnrFile)
@@ -76,6 +76,126 @@ def findTForPsnrs(psnrDict):
     for i in range(1, len(psnrDict)):
         if psnrDict[str(i)] == 0:
             return i
+
+def createPsnrTableContent(resultDict):
+    """
+    resultDict is a dict of keys that name network configurations
+    to dicts that describe scores of keys that name datasets
+    """
+
+    avgKey = "AVG"
+
+    # create a list of dataset keys and add the avgerage key to it.
+    for k in resultDict:
+        dKeys = list(resultDict[k].keys())
+        break
+    dKeys.sort()
+    dKeys.append(avgKey)
+
+    # calculate the average scores for the methods over the datasets
+    for netC in resultDict:
+        kAvg = 0.0
+        kCnt = 0.0
+        for d in resultDict[netC]:
+            kAvg += resultDict[netC][d]
+            kCnt += 1.0
+        resultDict[netC][avgKey] = kAvg / kCnt
+
+    # create a dict that encodes which network is the best one per dataset
+    bestNetsPerDataSet = dict() # dataset key -> network key
+
+    for dKey in dKeys:
+        bestNetScore = 0
+        bestNetKey = "none"
+
+        for netC in resultDict:
+            if resultDict[netC][dKey] > bestNetScore:
+                bestNetScore = resultDict[netC][dKey]
+                bestNetKey = netC
+
+        bestNetsPerDataSet[dKey] = bestNetKey        
+
+    # start producing the output string
+
+    # one network per column, one dataset per row
+    result = "\\begin{tabular}{l|"
+    for nix, netCfg in enumerate(resultDict):
+        result += "l"
+        if nix != len(resultDict)-1:
+            result += " "
+    result += "}\n"
+
+    result += "dataset & "
+
+    for nix, netCfg in enumerate(resultDict):
+        result += netCfg.replace("_", "\\_")
+        if nix + 1 == len(resultDict):
+            result += " \\\\\n"
+        else:
+            result += " & "
+    result += "\\hline\n"
+
+    for dKey in dKeys:
+        result += dKey.replace("_", "\\_") + " & "
+        
+        for nix, netCfg in enumerate(resultDict):
+            fstr = "${:0.3f}$".format(resultDict[netCfg][dKey]) 
+            if bestNetsPerDataSet[dKey] == netCfg:
+                result += "\\boldmath{" + fstr + "}"
+            else:
+                result += fstr
+
+            if nix + 1 == len(resultDict):
+                result += " \\\\\n"
+            else:
+                result += " & "
+
+    result += "\\end{tabular}\n"
+
+    return result
+
+
+    # one network per column, one dataset per row
+    # result = "\\begin{tabular}{l|"
+    # for x in dKeys:
+    #     result += "l"
+    #     if x != dKeys[-1]:
+    #         result += " "
+    # result += "}\n"
+
+    # result += "configuration & "
+
+    # # begin work on the header line
+    # for idx, k in enumerate(dKeys):
+    #     result += k.replace("_", "\\_")
+    #     if idx + 1 == len(dKeys):
+    #         result += " \\\\\n"
+    #     else:
+    #         result += " & "
+
+    # result += "\\hline\n"
+
+    # # produce lines per network config
+    # for netCfg in resultDict:
+    #     netName = netCfg.replace("_", "\\_")
+    #     result += netName + " & "
+
+    #     for idx, dKey in enumerate(dKeys):
+    #         fstr = "${:0.3f}$".format(resultDict[netCfg][dKey]) 
+    #         if bestNetsPerDataSet[dKey] == netCfg:
+    #             result += "\\boldmath{" + fstr + "}"
+    #         else:
+    #             result += fstr
+
+    #         if idx + 1 == len(dKeys):
+    #             result += " \\\\\n"
+    #         else:
+    #             result += " & "
+
+    # result += "\\end{tabular}\n"
+
+    # return result
+
 
 def createAvgDiagram(name, psnrFiles, targetFile):
     pDicts = [openJson(x) for x in psnrFiles]
@@ -149,6 +269,51 @@ def procDir(baseDir, dirName, currentDepth):
     
     return []
 
+def collectTableData(dirPath, aggFunc):
+    netConfigs = []
+    for d in os.listdir(dirPath):
+        if os.path.isdir(os.path.join(dirPath, d)):
+            netConfigs.append(d)
+        
+    tCfgs = []
+    for d in os.listdir(os.path.join(dirPath, netConfigs[0])):
+        if os.path.isdir(os.path.join(dirPath, netConfigs[0], d)):
+            tCfgs.append(d)
+        
+    dSets = []
+    for d in os.listdir(os.path.join(dirPath, netConfigs[0], tCfgs[0])):
+        if os.path.isdir(os.path.join(dirPath, netConfigs[0], tCfgs[0], d)):
+            dSets.append(d)
+
+    result = dict()
+
+    for tCfg in tCfgs:
+        result[tCfg] = dict()
+
+        for netC in netConfigs:
+            result[tCfg][netC] = dict()
+
+            for dSet in dSets:
+                psnrFile = os.path.join(dirPath, netC, tCfg, dSet, "psnr.json")
+                result[tCfg][netC][dSet] = aggFunc(openJson(psnrFile))
+
+    return result
+
+def minAggFunc(psnrDict):
+    values = np.array(list(psnrDict.values()), dtype=np.float32)
+    return np.min(values[values != 0])
+
+def avgAggFunc(psnrDict):
+    values = np.array(list(psnrDict.values()), dtype=np.float32)
+    return np.mean(values[values != 0])
+    
+def writeTableTxt(tData, fPath, aggName):
+    for tKey in tData:
+        tTxt = createPsnrTableContent(tData[tKey])
+        wPath = os.path.join(fPath, aggName + tKey + ".txt")
+        writeTxt(wPath, tTxt)
+        print("Wrote table file " + wPath)
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description="PSNR chart generator")
@@ -156,8 +321,16 @@ if __name__ == '__main__':
 
     params = parser.parse_args()
 
+    # generate charts
     for f in os.listdir(params.dir):
-        baseDir = os.path.join(params.dir, f)
-        procDir(baseDir, baseDir, 0)
+        if os.path.isdir(os.path.join(params.dir, f)):
+            baseDir = os.path.join(params.dir, f)
+            procDir(baseDir, baseDir, 0)
 
+    # generate latex tables
+    tDataMin = collectTableData(params.dir, minAggFunc)
+    tDataAvg = collectTableData(params.dir, avgAggFunc)
+    writeTableTxt(tDataMin, params.dir, "min_")
+    writeTableTxt(tDataAvg, params.dir, "avg_")
+    
     

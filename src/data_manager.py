@@ -709,7 +709,7 @@ def _extract_custom_patches_worker_flownet(tuples, flow_threshold, jumpcut_thres
 
     return patches
 
-# not used, used instead is the flownet2 version, which is ~50x faster.
+# not used, this is the old SimpleFlow based version, used instead is the flownet2 version, which is ~50x faster.
 def _extract_custom_patches_worker(tuples, flow_threshold, jumpcut_threshold, force_horizontal):
     assert config.MAX_SEQUENCE_LENGTH == 3 or not config.FORCE_HORIZONTAL, "using a sequence length of above 3 with force horizontal is not implemented to work correctly"
 

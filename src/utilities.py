@@ -13,6 +13,14 @@ def openJson(path):
         parsed = json.load(f)
     return parsed
 
+def writeJson(path, data):
+    with open(path, 'w') as f:
+        json.dump(data, f)
+
+def writeTxt(path, txt):
+    with open(path, 'w') as f:
+        f.write(txt)
+
 def pil_to_cv(pil_image):
     """
     Returns a copy of an image in a representation suited for OpenCV

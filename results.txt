@@ -154,9 +154,133 @@ PSNR of ./out_run_1/model_epoch_25.pth is 33.07917022705078
 PSNR of ./out_run_1/model_epoch_26.pth is 32.89460754394531
 
 
+
+
+seq_len_3_hq
+
+crop_size 228m batch size 16
+349k dataset of 9-sequences
+sequence length 3
+
+lr 0.001 for 8 epochs
+lr 0.0001 for 12 epochs
+
+dataset 3, t=8
+
+PSNR of ./out_seq_len_3_hq/model_epoch_0.pth is 28.69107437133789 <- !
+PSNR of ./out_seq_len_3_hq/model_epoch_1.pth is 31.71993064880371 <- !
+PSNR of ./out_seq_len_3_hq/model_epoch_2.pth is 34.30262756347656 <- !
+PSNR of ./out_seq_len_3_hq/model_epoch_3.pth is 33.7767333984375 
+PSNR of ./out_seq_len_3_hq/model_epoch_4.pth is 32.623409271240234
+PSNR of ./out_seq_len_3_hq/model_epoch_5.pth is 34.20073699951172
+PSNR of ./out_seq_len_3_hq/model_epoch_6.pth is 34.59777069091797 <- !
+PSNR of ./out_seq_len_3_hq/model_epoch_7.pth is 32.95626449584961
+PSNR of ./out_seq_len_3_hq/model_epoch_8.pth is 34.68982696533203 <- !
+PSNR of ./out_seq_len_3_hq/model_epoch_9.pth is 34.703372955322266 <- !
+PSNR of ./out_seq_len_3_hq/model_epoch_10.pth is 34.11996078491211
+PSNR of ./out_seq_len_3_hq/model_epoch_11.pth is 34.34400939941406
+PSNR of ./out_seq_len_3_hq/model_epoch_12.pth is 34.73463821411133 <- !
+PSNR of ./out_seq_len_3_hq/model_epoch_13.pth is 34.31355285644531
+PSNR of ./out_seq_len_3_hq/model_epoch_14.pth is 34.92925262451172 <- !
+PSNR of ./out_seq_len_3_hq/model_epoch_15.pth is 34.594512939453125
+PSNR of ./out_seq_len_3_hq/model_epoch_16.pth is 34.946754455566406 <- best
+PSNR of ./out_seq_len_3_hq/model_epoch_17.pth is 34.742164611816406
+PSNR of ./out_seq_len_3_hq/model_epoch_18.pth is 34.884525299072266
+PSNR of ./out_seq_len_3_hq/model_epoch_19.pth is 34.778831481933594
+PSNR of ./out_seq_len_3_hq/model_epoch_20.pth is 34.43476867675781
+
+
+3to2_hq
+
+crop_size 228m batch size 10 (vram limited)
+
+349k dataset of 9-sequences
+sequence length 5, trained to output 2 frames from 3 input frames
+
+lr 0.001 for 8 epochs
+lr 0.0001 for 12 epochs
+
+
+dataset 3, t=8
+
+
+PSNR of ./out_3to2_hq/model_epoch_0.pth is 32.51363754272461 <- !
+PSNR of ./out_3to2_hq/model_epoch_1.pth is 34.108516693115234 <- !
+PSNR of ./out_3to2_hq/model_epoch_2.pth is 34.07352066040039
+PSNR of ./out_3to2_hq/model_epoch_3.pth is 34.56928634643555 <- !
+PSNR of ./out_3to2_hq/model_epoch_4.pth is 34.10432052612305
+PSNR of ./out_3to2_hq/model_epoch_5.pth is 34.56619644165039
+PSNR of ./out_3to2_hq/model_epoch_6.pth is 34.528656005859375
+PSNR of ./out_3to2_hq/model_epoch_7.pth is 32.82039260864258
+PSNR of ./out_3to2_hq/model_epoch_8.pth is 35.007354736328125 <- best
+PSNR of ./out_3to2_hq/model_epoch_9.pth is 34.87336730957031
+PSNR of ./out_3to2_hq/model_epoch_10.pth is 34.770965576171875
+PSNR of ./out_3to2_hq/model_epoch_11.pth is 34.76258087158203
+PSNR of ./out_3to2_hq/model_epoch_12.pth is 34.9390754699707
+PSNR of ./out_3to2_hq/model_epoch_13.pth is 34.637237548828125
+PSNR of ./out_3to2_hq/model_epoch_14.pth is 34.92022705078125
+PSNR of ./out_3to2_hq/model_epoch_15.pth is 34.89270782470703
+PSNR of ./out_3to2_hq/model_epoch_16.pth is 34.61268997192383
+PSNR of ./out_3to2_hq/model_epoch_17.pth is 34.791385650634766
+PSNR of ./out_3to2_hq/model_epoch_18.pth is 34.91421127319336
+PSNR of ./out_3to2_hq/model_epoch_19.pth is 34.993499755859375
+PSNR of ./out_3to2_hq/model_epoch_20.pth is 34.96112823486328
+
+
+out_seq_len_9_hq
+
+
+349k dataset of 9-sequences
+first epoch sequence length 3,
+second epoch sequence length 5,
+then sequence length 9
+
+lr 0.001 for 8 epochs
+lr 0.0001 for 12 epochs
+
+
+batch size 5, vram constraint!
+crop size 128
+
+dataset 3, t=8
+
+
+PSNR of ./out_seq_len_9_hq/model_epoch_0.pth is 30.531375885009766 <- !
+PSNR of ./out_seq_len_9_hq/model_epoch_1.pth is 32.03166198730469 <- !
+PSNR of ./out_seq_len_9_hq/model_epoch_2.pth is 32.73455047607422
+PSNR of ./out_seq_len_9_hq/model_epoch_3.pth is 32.95893859863281 <- !
+PSNR of ./out_seq_len_9_hq/model_epoch_4.pth is 32.49634552001953
+PSNR of ./out_seq_len_9_hq/model_epoch_5.pth is 32.797637939453125
+PSNR of ./out_seq_len_9_hq/model_epoch_6.pth is 32.45096206665039
+PSNR of ./out_seq_len_9_hq/model_epoch_7.pth is 33.73199462890625 <- !
+PSNR of ./out_seq_len_9_hq/model_epoch_8.pth is 34.07177734375 <- !
+PSNR of ./out_seq_len_9_hq/model_epoch_9.pth is 33.976951599121094
+PSNR of ./out_seq_len_9_hq/model_epoch_10.pth is 34.04205322265625
+PSNR of ./out_seq_len_9_hq/model_epoch_11.pth is 33.93927764892578
+PSNR of ./out_seq_len_9_hq/model_epoch_12.pth is 33.44064712524414
+PSNR of ./out_seq_len_9_hq/model_epoch_13.pth is 33.89458465576172
+PSNR of ./out_seq_len_9_hq/model_epoch_14.pth is 33.797019958496094
+PSNR of ./out_seq_len_9_hq/model_epoch_15.pth is 34.19587707519531 <- best
+PSNR of ./out_seq_len_9_hq/model_epoch_16.pth is 34.1568603515625
+PSNR of ./out_seq_len_9_hq/model_epoch_17.pth is 33.76026916503906
+PSNR of ./out_seq_len_9_hq/model_epoch_18.pth is 33.692222595214844
+PSNR of ./out_seq_len_9_hq/model_epoch_19.pth is 33.564361572265625
+PSNR of ./out_seq_len_9_hq/model_epoch_20.pth is 33.804412841796875
+
+-> worse than the baseline? Training seq9 on this bigger network might require too many epochs? Something went wrong?
+Can't do another run, this took 20 hours per epoch :(
+
+
+
 =========
 
 Results in short, since dataset 3 was used as validation these results may be slightly overfitted!
+
+icme: https://www.tut.fi/civit/index.php/icme-2018-grand-challenge-densely-sampled-light-field-reconstruction/
+
+dataset1 is the icme dataset "Lambertian DD"
+dataset2 is the icme dataset "Synthetic DD"
+dataset3 is the icme dataset "Complex DD"
 
 2to1 sequence length 3 low quality training dataset, using epoch 26:
 This is basically the baseline model, but trained on my low quality dataset, yielding better comparability to the other experiments.
